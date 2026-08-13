@@ -1,0 +1,5 @@
+# Taruh link KE SALAH SATU CHAPTER (bebas chapter mana saja) dari tiap
+# series VeiNovel yang mau di-download, satu link per baris.
+# Script otomatis menemukan SEMUA chapter dalam series tsb dan
+# mengelompokkannya per Volume secara otomatis.
+https://veinovel.com/series/you-have-such-a-cute-fiancee-yet-you-like-another-girl/chapter/v1c0.1
