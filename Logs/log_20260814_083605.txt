@@ -1,0 +1,93 @@
+[08:36:05] 📄 1 halaman index ditemukan di 'PageUrls.txt'
+[08:36:05] 
+########## [1/1] https://agungxnovel.my.id/novel/ore-no-osananajimi ##########
+[08:36:05] 📖 Membaca halaman index: https://agungxnovel.my.id/novel/ore-no-osananajimi
+[08:36:05]    🔎 Terdeteksi sebagai situs AgungX Novel.
+[08:36:05]    📌 Judul terdeteksi: Ore no Osananajimi wa Main Heroine Rashii.
+[08:36:05]    ✅ Volume 1: 14 link ditemukan
+[08:36:05]    ✅ Volume 2: 15 link ditemukan
+[08:36:05] 📚 Novel: Ore no Osananajimi wa Main Heroine Rashii. — 2 volume terdeteksi
+[08:36:06] 
+=== Memproses Volume 1 (14 bab) ===
+[08:36:06]    📸 Mengunduh gambar sampul novel...
+[08:36:06]    [1/14] Scraping: https://agungxnovel.my.id/chapter/1124
+[08:36:06]    ✅ "Volume 1 Prolog (Pembukaan)" — 2458 kata, 0 gambar (0.3s)
+[08:36:06]    [2/14] Scraping: https://agungxnovel.my.id/chapter/1125
+[08:36:07]    ✅ "Volume 1 Chapter 1 - Upacara Masuk Sekolah" — 4670 kata, 2 gambar (0.3s)
+[08:36:07]    [3/14] Scraping: https://agungxnovel.my.id/chapter/1126
+[08:36:07]    ✅ "Volume 1 Chapter 2 – Teman" — 1725 kata, 0 gambar (0.3s)
+[08:36:07]    [4/14] Scraping: https://agungxnovel.my.id/chapter/1127
+[08:36:07]    ✅ "Volume 1 Chapter 3 - Perbedaan Tinggi Badan" — 1604 kata, 1 gambar (0.3s)
+[08:36:07]    [5/14] Scraping: https://agungxnovel.my.id/chapter/1128
+[08:36:08]    ✅ "Volume 1 Chapter 4 - Tes Kekuatan Fisik" — 1989 kata, 0 gambar (0.3s)
+[08:36:08]    [6/14] Scraping: https://agungxnovel.my.id/chapter/1129
+[08:36:08]    ✅ "Volume 1 Chapter 5 - Pengakuan (Confession)" — 2177 kata, 0 gambar (0.3s)
+[08:36:08]    [7/14] Scraping: https://agungxnovel.my.id/chapter/1130
+[08:36:08]    ✅ "Volume 1 Chapter 6 - Pengalaman Bergabung dengan Klub" — 3544 kata, 1 gambar (0.3s)
+[08:36:08]    [8/14] Scraping: https://agungxnovel.my.id/chapter/1131
+[08:36:08]    ✅ "Volume 1 Chapter 7 - Cerita di Sekolah Alam" — 9885 kata, 2 gambar (0.3s)
+[08:36:08]    [9/14] Scraping: https://agungxnovel.my.id/chapter/1132
+[08:36:09]    ✅ "Volume 1 Chapter 8 - Cerita Liburan" — 3190 kata, 1 gambar (0.3s)
+[08:36:09]    [10/14] Scraping: https://agungxnovel.my.id/chapter/1133
+[08:36:09]    ✅ "Volume 1 Interlude - Jeritan Putus Asa dari Seorang Pria" — 319 kata, 0 gambar (0.3s)
+[08:36:09]    [11/14] Scraping: https://agungxnovel.my.id/chapter/1134
+[08:36:09]    ✅ "Volume 1 Chapter 9 - Bekal Makan Siang" — 3060 kata, 0 gambar (0.3s)
+[08:36:09]    [12/14] Scraping: https://agungxnovel.my.id/chapter/1135
+[08:36:10]    ✅ "Volume 1 Chapter 10 - Ingin Menjadi Heroine Utamamu" — 4425 kata, 1 gambar (0.3s)
+[08:36:10]    [13/14] Scraping: https://agungxnovel.my.id/chapter/1136
+[08:36:10]    ✅ "Volume 1 Epilog" — 388 kata, 1 gambar (0.3s)
+[08:36:10]    [14/14] Scraping: https://agungxnovel.my.id/chapter/1137
+[08:36:10]    ✅ "Volume 1 AFTERWORD – KATA PENUTUP" — 366 kata, 0 gambar (0.3s)
+[08:36:15]    ✅ Tersimpan: Result\Ore no Osananajimi wa Main Heroine Rashii. Vol 1.pdf (14 bab, 9.5s)
+[08:36:15] 
+=== Memproses Volume 2 (15 bab) ===
+[08:36:15]    📸 Mengunduh gambar sampul novel...
+[08:36:15]    [1/15] Scraping: https://agungxnovel.my.id/chapter/1167
+[08:36:16]    ✅ "Volume 2 AFTERWORD – KATA PENUTUP" — 722 kata, 0 gambar (0.3s)
+[08:36:16]    [2/15] Scraping: https://agungxnovel.my.id/chapter/1153
+[08:36:16]    ✅ "Volume 2 Prolog - Bunga Layu" — 366 kata, 0 gambar (0.3s)
+[08:36:16]    [3/15] Scraping: https://agungxnovel.my.id/chapter/1154
+[08:36:16]    ✅ "Volume 2 Chapter 1 - Ketua dan Wakil Ketua OSIS" — 2805 kata, 1 gambar (0.3s)
+[08:36:16]    [4/15] Scraping: https://agungxnovel.my.id/chapter/1155
+[08:36:17]    ✅ "Volume 2 Chapter 2 – Milikku" — 4715 kata, 0 gambar (0.3s)
+[08:36:17]    [5/15] Scraping: https://agungxnovel.my.id/chapter/1156
+[08:36:17]    ✅ "Volume 2 Chapter 3 - Rasa Tidak Nyaman" — 2848 kata, 0 gambar (0.3s)
+[08:36:17]    [6/15] Scraping: https://agungxnovel.my.id/chapter/1157
+[08:36:17]    ✅ "Volume 2 Chapter 4 - Strategi Menaklukkan Teman Masa Kecil" — 2897 kata, 1 gambar (0.3s)
+[08:36:17]    [7/15] Scraping: https://agungxnovel.my.id/chapter/1158
+[08:36:17]    ✅ "Volume 2 Chapter 5 – Tunangan" — 2891 kata, 1 gambar (0.3s)
+[08:36:17]    [8/15] Scraping: https://agungxnovel.my.id/chapter/1159
+[08:36:18]    ✅ "Volume 2 Interlude 1 – Kelaparan" — 3855 kata, 1 gambar (0.3s)
+[08:36:18]    [9/15] Scraping: https://agungxnovel.my.id/chapter/1160
+[08:36:18]    ✅ "Volume 2 Chapter 6 - Seperti Dalam" — 3941 kata, 1 gambar (0.3s)
+[08:36:18]    [10/15] Scraping: https://agungxnovel.my.id/chapter/1161
+[08:36:18]    ✅ "Volume 2 Chapter 7 - Jangan Memutuskan Sendiri" — 2021 kata, 0 gambar (0.3s)
+[08:36:18]    [11/15] Scraping: https://agungxnovel.my.id/chapter/1162
+[08:36:19]    ✅ "Volume 2 Chapter 8 – Curang" — 1825 kata, 0 gambar (0.3s)
+[08:36:19]    [12/15] Scraping: https://agungxnovel.my.id/chapter/1163
+[08:36:19]    ✅ "Volume 2 Interlude 2 – Obsesi" — 825 kata, 0 gambar (0.3s)
+[08:36:19]    [13/15] Scraping: https://agungxnovel.my.id/chapter/1164
+[08:36:19]    ✅ "Volume 2 Chapter 9 - Festival Olahraga dan Bayangan Mencurigakan" — 2467 kata, 1 gambar (0.3s)
+[08:36:19]    [14/15] Scraping: https://agungxnovel.my.id/chapter/1165
+[08:36:20]    ✅ "Volume 2 Chapter 10 - Kanvas Rahasia" — 3373 kata, 0 gambar (0.3s)
+[08:36:20]    [15/15] Scraping: https://agungxnovel.my.id/chapter/1166
+[08:36:20]    ✅ "Volume 2 Chapter 11 - Orang yang Disukai" — 1689 kata, 1 gambar (0.3s)
+[08:36:24]    ✅ Tersimpan: Result\Ore no Osananajimi wa Main Heroine Rashii. Vol 2.pdf (15 bab, 9.0s)
+[08:36:24] 🏁 Selesai 'Ore no Osananajimi wa Main Heroine Rashii.' dalam 19.1s
+[08:36:24] 
+✅ Semua entri di PageUrls.txt selesai diproses!
+[08:36:24] 
+==================================================
+[08:36:24] 📊 RINGKASAN
+[08:36:24] ==================================================
+[08:36:24] Novel berhasil      : 1
+[08:36:24] Novel gagal         : 0
+[08:36:24] Volume/PDF selesai  : 2
+[08:36:24] Volume dilewati     : 0 (PDF sudah ada)
+[08:36:24] Chapter berhasil    : 29
+[08:36:24] Chapter gagal       : 0
+[08:36:24] Gambar berhasil     : 18
+[08:36:24] Gambar gagal        : 0
+[08:36:24] Total waktu         : 19.1s
+[08:36:24] 
+📝 Log lengkap disimpan di: Logs\log_20260814_083605.txt

@@ -1,0 +1,34 @@
+[16:30:50] 📄 1 halaman index ditemukan di 'PageUrls.txt'
+[16:30:50] 
+########## [1/1] https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-ilustrasi/ ##########
+[16:30:50] 📖 Membaca halaman index: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-ilustrasi/
+[16:30:51]    🔎 Terdeteksi sebagai situs bertema Madara, crawl via Prev/Next...
+[16:30:51]    🐞 [debug] gak nemu #manga-chapters-holder, tapi ada 3 elemen beratribut data-id:
+[16:30:51]       <div id='manga-reading-nav-head' class=['entry-header', 'header'] data-id='1916'>
+[16:30:51]       <input id='wp-manga-current-chap' class=None data-id='423'>
+[16:30:51]       <div id='manga-reading-nav-foot' class=['entry-header', 'footer'] data-id='1916'>
+[16:30:51]    🔎 Coba ambil daftar chapter via AJAX Madara (post id 1916)...
+[16:30:51]    🐞 [debug] AJAX POST https://archtranslation.com/wp-admin/admin-ajax.php -> status 400, panjang respons 1 char
+[16:30:51]    🐞 [debug] cuplikan respons AJAX: '0'
+[16:30:51]    ⚠️ AJAX kosong/gagal diparse (kemungkinan diblok nonce), fallback ke crawl manual via 'Next'...
+[16:30:51]    ⚠️ Dilewati, gagal parse halaman index: Tidak menemukan tombol 'Read First' di halaman index Madara.
+[16:30:51] 
+✅ Semua entri di PageUrls.txt selesai diproses!
+[16:30:51] 
+📄 1 entri start-crawl ditemukan di 'StartUrls.txt'
+[16:30:51] 
+########## [StartUrls 1/1] https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-ilustrasi/ ##########
+[16:30:51]    🔎 Coba ambil judul & cover dari halaman utama novel: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/
+[16:30:51] 📚 Novel: Kuruna Megami-sama to Issho ni Sundara (mode start-url manual)
+[16:30:51]    🔗 Mulai crawl 'Next' dari: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-ilustrasi/
+[16:30:55]    🔗 5 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama to Issho ni Sundara V3 bab 4)
+[16:30:58]    🔗 10 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama to Issho ni Sundara vol 2 ilustrasi)
+[16:31:01]    🔗 15 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 5)
+[16:31:03]    🔗 20 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama to Issho ni Sundara vol 2 side story)
+[16:31:06]    🔗 25 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama Vol 1 Bab 4)
+[16:31:09]    🔗 30 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama Vol 1 Bab 9)
+[16:31:10]    ✅ Volume 1: 12 link ditemukan
+[16:31:10]    ✅ Volume 2: 11 link ditemukan
+[16:31:10]    ✅ Volume 3: 9 link ditemukan
+[16:31:10] 
+=== Memproses Volume 1 (12 bab) ===

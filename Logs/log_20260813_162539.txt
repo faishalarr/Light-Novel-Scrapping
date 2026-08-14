@@ -1,0 +1,105 @@
+[16:25:39] 📄 1 halaman index ditemukan di 'PageUrls.txt'
+[16:25:39] 
+########## [1/1] https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-ilustrasi/ ##########
+[16:25:39] 📖 Membaca halaman index: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-ilustrasi/
+[16:25:40]    🔎 Terdeteksi sebagai situs bertema Madara, crawl via Prev/Next...
+[16:25:40]    🐞 [debug] gak nemu #manga-chapters-holder, tapi ada 3 elemen beratribut data-id:
+[16:25:40]       <div id='manga-reading-nav-head' class=['entry-header', 'header'] data-id='1916'>
+[16:25:40]       <input id='wp-manga-current-chap' class=None data-id='423'>
+[16:25:40]       <div id='manga-reading-nav-foot' class=['entry-header', 'footer'] data-id='1916'>
+[16:25:40]    🔎 Coba ambil daftar chapter via AJAX Madara (post id 1916)...
+[16:25:40]    🐞 [debug] AJAX POST https://archtranslation.com/wp-admin/admin-ajax.php -> status 400, panjang respons 1 char
+[16:25:40]    🐞 [debug] cuplikan respons AJAX: '0'
+[16:25:40]    ⚠️ AJAX kosong/gagal diparse (kemungkinan diblok nonce), fallback ke crawl manual via 'Next'...
+[16:25:40]    ⚠️ Dilewati, gagal parse halaman index: Tidak menemukan tombol 'Read First' di halaman index Madara.
+[16:25:40] 
+✅ Semua entri di PageUrls.txt selesai diproses!
+[16:25:40] 
+📄 1 entri start-crawl ditemukan di 'StartUrls.txt'
+[16:25:40] 
+########## [StartUrls 1/1] https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-ilustrasi/ ##########
+[16:25:40]    🔎 Coba ambil judul & cover dari halaman utama novel: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/
+[16:25:41] 📚 Novel: Kuruna Megami-sama to Issho ni Sundara (mode start-url manual)
+[16:25:41]    📸 Cover novel ditemukan dari halaman utama.
+[16:25:41]    🔗 Mulai crawl 'Next' dari: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-ilustrasi/
+[16:25:44]    🔗 5 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama to Issho ni Sundara V3 bab 4)
+[16:25:47]    🔗 10 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama to Issho ni Sundara vol 2 ilustrasi)
+[16:25:51]    🔗 15 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 5)
+[16:25:54]    🔗 20 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama to Issho ni Sundara vol 2 side story)
+[16:25:56]    🔗 25 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama Vol 1 Bab 4)
+[16:25:59]    🔗 30 chapter ditemukan lewat crawl Next... (terakhir: Kuruna Megami-sama Vol 1 Bab 9)
+[16:26:00]    ✅ Volume 1: 12 link ditemukan
+[16:26:00]    ✅ Volume 2: 11 link ditemukan
+[16:26:00]    ✅ Volume 3: 9 link ditemukan
+[16:26:00] 
+=== Memproses Volume 1 (12 bab) ===
+[16:26:00]    ⏭️ Dilewati (PDF sudah ada): Result\Kuruna Megami-sama to Issho ni Sundara Vol 1.pdf
+[16:26:00] 
+=== Memproses Volume 2 (11 bab) ===
+[16:26:00]    📸 Mengunduh gambar sampul novel...
+[16:26:02]    [1/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-ilustrasi/
+[16:26:02]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 ilustrasi" — 70 kata, 10 gambar (0.9s)
+[16:26:02]    [2/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-1/
+[16:26:03]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 1" — 6095 kata, 7 gambar (0.6s)
+[16:26:03]    [3/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-2/
+[16:26:04]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 2" — 3447 kata, 6 gambar (0.6s)
+[16:26:04]    [4/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-3/
+[16:26:04]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 3" — 4892 kata, 7 gambar (0.7s)
+[16:26:04]    [5/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-4/
+[16:26:05]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 4" — 3113 kata, 6 gambar (0.6s)
+[16:26:05]    [6/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-5/
+[16:26:05]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 5" — 5389 kata, 5 gambar (0.5s)
+[16:26:05]    [7/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-6/
+[16:26:06]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 6" — 2807 kata, 6 gambar (0.6s)
+[16:26:06]    [8/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-7/
+[16:26:07]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 7" — 4849 kata, 6 gambar (0.5s)
+[16:26:07]    [9/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-8/
+[16:26:07]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 8" — 3846 kata, 5 gambar (0.6s)
+[16:26:07]    [10/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-chapter-9/
+[16:26:08]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 chapter 9" — 4962 kata, 7 gambar (0.6s)
+[16:26:08]    [11/11] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-side-story/
+[16:26:09]    ✅ "Kuruna Megami-sama to Issho ni Sundara vol 2 side story" — 691 kata, 6 gambar (1.0s)
+[16:26:39]    ✅ Tersimpan: Result\Kuruna Megami-sama to Issho ni Sundara Vol 2.pdf (11 bab, 38.5s)
+[16:26:39] 
+=== Memproses Volume 3 (9 bab) ===
+[16:26:39]    📸 Mengunduh gambar sampul novel...
+[16:26:39]    [1/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-ilustrasi/
+[16:26:40]    ✅ "Kuruna Megami-sama to Issho ni Sundara V3 ilustrasi" — 69 kata, 9 gambar (0.5s)
+[16:26:40]    [2/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-bab-1/
+[16:26:40]    ✅ "Bab 1" — 4073 kata, 6 gambar (0.6s)
+[16:26:40]    [3/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-bab-2/
+[16:26:41]    ✅ "Bab 2" — 5700 kata, 6 gambar (0.6s)
+[16:26:41]    [4/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-bab-3/
+[16:26:42]    ✅ "Bab 3" — 2130 kata, 6 gambar (0.7s)
+[16:26:42]    [5/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-bab-4/
+[16:26:42]    ✅ "Bab 4" — 4417 kata, 6 gambar (0.7s)
+[16:26:42]    [6/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-bab-5/
+[16:26:43]    ✅ "Bab 5" — 2368 kata, 5 gambar (0.9s)
+[16:26:43]    [7/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-bab-6/
+[16:26:44]    ✅ "Bab 6" — 6302 kata, 6 gambar (1.2s)
+[16:26:44]    [8/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-bab-7/
+[16:26:45]    ✅ "Bab 7" — 9552 kata, 8 gambar (1.0s)
+[16:26:45]    [9/9] Scraping: https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-3/kuruna-megami-sama-to-issho-ni-sundara-v3-bab-8/
+[16:26:46]    ✅ "Bab 8" — 4135 kata, 7 gambar (1.0s)
+[16:27:25]    ✅ Tersimpan: Result\Kuruna Megami-sama to Issho ni Sundara Vol 3.pdf (9 bab, 46.1s)
+[16:27:25] 🏁 Selesai 'Kuruna Megami-sama to Issho ni Sundara' dalam 104.5s
+[16:27:25] 
+✅ Semua entri di StartUrls.txt selesai diproses!
+[16:27:25] 
+==================================================
+[16:27:25] 📊 RINGKASAN
+[16:27:25] ==================================================
+[16:27:25] Novel berhasil      : 1
+[16:27:25] Novel gagal         : 1
+[16:27:25] Volume/PDF selesai  : 2
+[16:27:25] Volume dilewati     : 1 (PDF sudah ada)
+[16:27:25] Chapter berhasil    : 20
+[16:27:25] Chapter gagal       : 0
+[16:27:25] Gambar berhasil     : 132
+[16:27:25] Gambar gagal        : 0
+[16:27:25] Total waktu         : 105.6s
+[16:27:25] 
+⚠️ Detail 1 error/skip:
+[16:27:25]    - https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/volume-2/kuruna-megami-sama-to-issho-ni-sundara-vol-2-ilustrasi/ -> Tidak menemukan tombol 'Read First' di halaman index Madara.
+[16:27:25] 
+📝 Log lengkap disimpan di: Logs\log_20260813_162539.txt

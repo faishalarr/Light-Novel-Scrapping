@@ -1,0 +1,64 @@
+[08:37:37] 📄 1 halaman index ditemukan di 'PageUrls.txt'
+[08:37:37] 
+########## [1/1] https://agungxnovel.my.id/novel/ore-no-osananajimi ##########
+[08:37:37] 📖 Membaca halaman index: https://agungxnovel.my.id/novel/ore-no-osananajimi
+[08:37:38]    🔎 Terdeteksi sebagai situs AgungX Novel.
+[08:37:38]    📌 Judul terdeteksi: Ore no Osananajimi wa Main Heroine Rashii.
+[08:37:38]    ✅ Volume 1: 14 link ditemukan
+[08:37:38]    ✅ Volume 2: 15 link ditemukan
+[08:37:38] 📚 Novel: Ore no Osananajimi wa Main Heroine Rashii. — 2 volume terdeteksi
+[08:37:38] 
+=== Memproses Volume 1 (14 bab) ===
+[08:37:38]    ⏭️ Dilewati (PDF sudah ada): Result\Ore no Osananajimi wa Main Heroine Rashii. Vol 1.pdf
+[08:37:38] 
+=== Memproses Volume 2 (15 bab) ===
+[08:37:38]    📸 Mengunduh gambar sampul novel...
+[08:37:38]    [1/15] Scraping: https://agungxnovel.my.id/chapter/1153
+[08:37:39]    ✅ "Volume 2 Prolog - Bunga Layu" — 366 kata, 0 gambar (0.3s)
+[08:37:39]    [2/15] Scraping: https://agungxnovel.my.id/chapter/1154
+[08:37:39]    ✅ "Volume 2 Chapter 1 - Ketua dan Wakil Ketua OSIS" — 2805 kata, 1 gambar (0.3s)
+[08:37:39]    [3/15] Scraping: https://agungxnovel.my.id/chapter/1155
+[08:37:39]    ✅ "Volume 2 Chapter 2 – Milikku" — 4715 kata, 0 gambar (0.3s)
+[08:37:39]    [4/15] Scraping: https://agungxnovel.my.id/chapter/1156
+[08:37:40]    ✅ "Volume 2 Chapter 3 - Rasa Tidak Nyaman" — 2848 kata, 0 gambar (0.3s)
+[08:37:40]    [5/15] Scraping: https://agungxnovel.my.id/chapter/1157
+[08:37:40]    ✅ "Volume 2 Chapter 4 - Strategi Menaklukkan Teman Masa Kecil" — 2897 kata, 1 gambar (0.3s)
+[08:37:40]    [6/15] Scraping: https://agungxnovel.my.id/chapter/1158
+[08:37:40]    ✅ "Volume 2 Chapter 5 – Tunangan" — 2891 kata, 1 gambar (0.3s)
+[08:37:40]    [7/15] Scraping: https://agungxnovel.my.id/chapter/1159
+[08:37:40]    ✅ "Volume 2 Interlude 1 – Kelaparan" — 3855 kata, 1 gambar (0.3s)
+[08:37:40]    [8/15] Scraping: https://agungxnovel.my.id/chapter/1160
+[08:37:41]    ✅ "Volume 2 Chapter 6 - Seperti Dalam" — 3941 kata, 1 gambar (0.3s)
+[08:37:41]    [9/15] Scraping: https://agungxnovel.my.id/chapter/1161
+[08:37:41]    ✅ "Volume 2 Chapter 7 - Jangan Memutuskan Sendiri" — 2021 kata, 0 gambar (0.3s)
+[08:37:41]    [10/15] Scraping: https://agungxnovel.my.id/chapter/1162
+[08:37:41]    ✅ "Volume 2 Chapter 8 – Curang" — 1825 kata, 0 gambar (0.3s)
+[08:37:41]    [11/15] Scraping: https://agungxnovel.my.id/chapter/1163
+[08:37:42]    ✅ "Volume 2 Interlude 2 – Obsesi" — 825 kata, 0 gambar (0.3s)
+[08:37:42]    [12/15] Scraping: https://agungxnovel.my.id/chapter/1164
+[08:37:42]    ✅ "Volume 2 Chapter 9 - Festival Olahraga dan Bayangan Mencurigakan" — 2467 kata, 1 gambar (0.3s)
+[08:37:42]    [13/15] Scraping: https://agungxnovel.my.id/chapter/1165
+[08:37:42]    ✅ "Volume 2 Chapter 10 - Kanvas Rahasia" — 3373 kata, 0 gambar (0.3s)
+[08:37:42]    [14/15] Scraping: https://agungxnovel.my.id/chapter/1166
+[08:37:42]    ✅ "Volume 2 Chapter 11 - Orang yang Disukai" — 1689 kata, 1 gambar (0.3s)
+[08:37:42]    [15/15] Scraping: https://agungxnovel.my.id/chapter/1167
+[08:37:43]    ✅ "Volume 2 AFTERWORD – KATA PENUTUP" — 722 kata, 0 gambar (0.3s)
+[08:37:47]    ✅ Tersimpan: Result\Ore no Osananajimi wa Main Heroine Rashii. Vol 2.pdf (15 bab, 8.9s)
+[08:37:47] 🏁 Selesai 'Ore no Osananajimi wa Main Heroine Rashii.' dalam 9.6s
+[08:37:47] 
+✅ Semua entri di PageUrls.txt selesai diproses!
+[08:37:47] 
+==================================================
+[08:37:47] 📊 RINGKASAN
+[08:37:47] ==================================================
+[08:37:47] Novel berhasil      : 1
+[08:37:47] Novel gagal         : 0
+[08:37:47] Volume/PDF selesai  : 1
+[08:37:47] Volume dilewati     : 1 (PDF sudah ada)
+[08:37:47] Chapter berhasil    : 15
+[08:37:47] Chapter gagal       : 0
+[08:37:47] Gambar berhasil     : 8
+[08:37:47] Gambar gagal        : 0
+[08:37:47] Total waktu         : 9.6s
+[08:37:47] 
+📝 Log lengkap disimpan di: Logs\log_20260814_083737.txt
