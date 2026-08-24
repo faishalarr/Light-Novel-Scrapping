@@ -2,10 +2,11 @@ import io
 import os
 import re
 import time
+import math
 import datetime
 import requests
 from urllib.parse import urlparse, urljoin
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
@@ -20,13 +21,16 @@ from fpdf.enums import XPos, YPos
 # otomatis kepecah jadi 1 PDF per volume ("Volume 1", "Volume 2", dst
 # yang ketemu di halaman index-nya).
 #
-# Mendukung TIGA jenis situs, dideteksi otomatis (bukan hardcode domain,
+# Mendukung EMPAT jenis situs, dideteksi otomatis (bukan hardcode domain,
 # kecuali AgungX):
 #   - Situs Blogger (mis. kaoritranslation.blogspot.com, dst)
 #   - agungxnovel.my.id  (mis. https://agungxnovel.my.id/novel/<slug>)
 #   - Situs bertema Madara/WordPress (mis. archtranslation.com/manga/<slug>/,
 #     dan situs lain apapun yang pakai tema Madara — dideteksi otomatis
 #     lewat meta generator halamannya, jadi gak perlu didaftar manual)
+#   - Blog WordPress.com biasa (mis. cclawtranslations.home.blog, dan blog
+#     *.home.blog / *.wordpress.com lain — juga dideteksi lewat meta
+#     generator, bukan hardcode domain)
 #
 # Baris kosong atau yang diawali '#' diabaikan (bisa buat catatan).
 #
@@ -34,6 +38,7 @@ from fpdf.enums import XPos, YPos
 # https://kaoritranslation.blogspot.com/2025/12/zenmetsu-end-wo-shinimonogurui-de.html
 # https://agungxnovel.my.id/novel/kimi-no-gachi
 # https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/
+# https://cclawtranslations.home.blog/kibishii-onna-joushi-ga-koukousei-ni-modottara-ore-ni-dere-dere-suru-riyuu-ryoukataomoi-no-yaronaoshi-koukousei-seikatsu-toc/
 PAGE_URLS_FILE = "PageUrls.txt"
 
 # MODE 2 (MANUAL, SATU PDF GABUNGAN) — FALLBACK TERAKHIR:
@@ -83,12 +88,21 @@ junk_keywords = [
     # ("Penerjemah", "Proffreader") kepisah dari nama penerjemahnya
     # jadi tag terpisah di HTML, jadi teksnya cuma "Penerjemah" doang
     # tanpa ": Nama" di belakangnya.
-    'penerjemah', 'proffreader', 'proofreader', 'editor:',
+    'penerjemah', 'proffreader', 'proofreader', 'editor:', 'translator',
     'dengarkan', 'menit baca'
 ]
 
 # Domain-domain yang dianggap "agungxnovel-style" (bukan Blogger).
 AGUNGX_DOMAINS = ('agungxnovel.my.id',)
+
+# Domain-domain "kdtnovels-style" -- situs custom (bukan tema Madara
+# standar) yang halaman index-nya ("/series/<slug>/") sudah nampilin
+# SEMUA link chapter langsung di HTML dengan label "Vol. X Ch. Y ..."
+# (gak perlu AJAX kayak Madara).
+KDTNOVELS_DOMAINS = ('kdtnovels.net',)
+
+# Domain-domain Luminare Translations (Yarnovel theme)
+LUMINARE_DOMAINS = ('luminaretranslations.com',)
 
 # Batas aman auto-crawl "Next" buat mode Madara, biar gak infinite loop
 # kalau ada bug/redirect aneh.
@@ -175,15 +189,59 @@ def sanitize_filename(name):
     return name or "Novel"
 
 
+def fix_doubled_url(href):
+    """Kadang link chapter di halaman index situs sumber (ini murni salah
+    input dari sisi ADMIN situsnya, bukan bug di scraper) ke-double persis
+    jadi satu string tanpa pemisah, misal:
+
+        https://situs.com/x.htmlhttps://situs.com/x.html
+
+    Fungsi ini mendeteksi pola "URL diikuti pengulangan dirinya sendiri"
+    dan motongnya balik jadi satu URL aja. Kalau href-nya normal (gak
+    ke-double), dikembalikan apa adanya tanpa diubah."""
+    if not href:
+        return href
+
+    # Kasus paling umum: seluruh string persis 2x lipat isi yang sama
+    # (panjang genap, separuh pertama == separuh kedua).
+    n = len(href)
+    if n % 2 == 0:
+        half = n // 2
+        first, second = href[:half], href[half:]
+        if first == second and re.match(r'^https?://', first):
+            return first
+
+    # Fallback: cari kemunculan KEDUA dari "http://" atau "https://" di
+    # tengah string (skip beberapa karakter pertama biar gak nemu balik
+    # ke skema di posisi 0), lalu cek apakah bagian sebelum & sesudah titik
+    # itu persis sama -> kalau iya, itu tandanya URL-nya beneran ke-double.
+    m = re.search(r'https?://', href[8:])
+    if m:
+        split_at = m.start() + 8
+        first_part, second_part = href[:split_at], href[split_at:]
+        if first_part == second_part:
+            return first_part
+
+    return href
+
+
 def fetch_url(url):
     res = requests.get(url, headers=HEADERS, timeout=20)
     res.encoding = 'utf-8'
     return res
 
 
-def fetch_image(src_url):
+def fetch_image(src_url, referer=None):
+    headers = HEADERS
+    if referer:
+        # Beberapa CDN (mis. yang dipakai KDTNovels) nolak request gambar
+        # kalau gak ada header Referer yang cocok (proteksi hotlink) ->
+        # balikin status 403 meski URL-nya valid. Kirim Referer = halaman
+        # asal gambar itu ditemukan buat ngakalin ini.
+        headers = dict(HEADERS)
+        headers['Referer'] = referer
     try:
-        img_res = requests.get(src_url, headers=HEADERS, timeout=20)
+        img_res = requests.get(src_url, headers=headers, timeout=20)
         if img_res.status_code == 200:
             STATS["gambar_ok"] += 1
             return io.BytesIO(img_res.content)
@@ -199,6 +257,23 @@ def is_agungx(url_or_domain):
     return any(d in domain for d in AGUNGX_DOMAINS)
 
 
+def is_kdtnovels(url_or_domain):
+    domain = urlparse(url_or_domain).netloc or url_or_domain
+    return any(d in domain for d in KDTNOVELS_DOMAINS)
+
+
+def is_luminare(url_or_domain):
+    domain = urlparse(url_or_domain).netloc or url_or_domain
+    return any(d in domain for d in LUMINARE_DOMAINS)
+
+
+def is_yarnovel(soup):
+    body = soup.find('body')
+    if body and body.get('class'):
+        return any('yarnovel' in c for c in body.get('class'))
+    return False
+
+
 def is_madara(soup):
     """Deteksi tema Madara (dipakai banyak situs manga/novel WordPress,
     bukan cuma satu domain tertentu) lewat meta generator-nya."""
@@ -208,12 +283,20 @@ def is_madara(soup):
     return False
 
 
+def is_wpcom(soup):
+    """Deteksi blog WordPress.com biasa (mis. *.home.blog) lewat meta
+    generator-nya -- bukan Madara, cuma blog polos."""
+    gen = soup.find('meta', attrs={'name': 'generator'})
+    if gen and gen.get('content') and 'wordpress.com' in gen['content'].lower():
+        return True
+    return False
+
+
 def get_og_image(soup):
     og_image = soup.find('meta', attrs={'property': 'og:image'})
     if og_image and og_image.get('content'):
         return og_image['content']
-    img = soup.find('img')
-    return img.get('src') if img else None
+    return None
 
 
 def normalize_img_src(src):
@@ -316,7 +399,17 @@ def get_volumes_from_toc_blogger(toc_url, soup):
     current_vol = None
     seen = set()
 
-    for tag in post_body.find_all(['b', 'strong', 'h2', 'h3', 'h4', 'a']):
+    # Perluas tag yang di-scan buat penanda "Volume N": beberapa post Kaori
+    # TL nulis "Volume 2", "Volume 3" dst sebagai TEKS POLOS (gak dibold,
+    # gak pakai heading tag) -- beda sama "Volume 1" yang biasanya di-bold.
+    # Kalau cuma discan dari b/strong/h2-h4 doang, heading yang polos ini
+    # bakal kelewat -> current_vol nyangkut di volume sebelumnya, dan SEMUA
+    # chapter volume berikutnya (termasuk volume-volume sesudahnya lagi)
+    # keliru ke-lump jadi satu grup sama volume sebelumnya. Makanya di sini
+    # ikut discan tag 'p'/'div' juga, dengan syarat teksnya PERSIS "Volume
+    # N" doang (regex full-match), biar gak salah kena paragraf cerita yang
+    # kebetulan nyebut kata "volume" di tengah kalimat.
+    for tag in post_body.find_all(['b', 'strong', 'h2', 'h3', 'h4', 'p', 'div', 'a']):
         if tag.name != 'a':
             text = tag.get_text(strip=True)
             vol_match = re.match(r'^volume\s*(\d+)\s*$', text, re.IGNORECASE)
@@ -325,13 +418,21 @@ def get_volumes_from_toc_blogger(toc_url, soup):
                 volumes.setdefault(current_vol, [])
             continue
 
-        href = tag.get('href')
+        href = fix_doubled_url(tag.get('href'))
         if not href or current_vol is None or href in seen:
             continue
-        if not _is_bold_chapter_link(tag):
+        # Sama kayak jalur fallback di bawah: sengaja TIDAK mensyaratkan
+        # _is_bold_chapter_link() -- banyak post Kaori TL nulis link
+        # chapter-nya polos (gak dibold) di bawah heading "Volume N".
+        # Filter keamanannya pakai regex keyword label di bawah.
+        label = tag.get_text(strip=True)
+        if not re.search(
+            r'chapter|bab|prolog|prologue|epilog|epilogue|ilustrasi|illustrasi|'
+            r'afterword|extra|bonus|kata penutup|episode|eps\b',
+            label, re.IGNORECASE
+        ):
             continue
 
-        label = tag.get_text(strip=True)
         seen.add(href)
         volumes[current_vol].append((href, label))
 
@@ -339,12 +440,18 @@ def get_volumes_from_toc_blogger(toc_url, soup):
         log("   ℹ️ Tidak ada penanda 'Volume N', coba anggap 1 volume tunggal...", "WARN")
         fallback_links = []
         for a in post_body.find_all('a'):
-            href = a.get('href')
-            if not href or href in seen or not _is_bold_chapter_link(a):
+            href = fix_doubled_url(a.get('href'))
+            if not href or href in seen:
                 continue
+            # Catatan: sengaja TIDAK mensyaratkan _is_bold_chapter_link()
+            # di sini. Beberapa blog nulis link chapter-nya polos (gak
+            # dibold) khususnya kalau novelnya cuma 1 volume / gak punya
+            # heading "Volume N" sama sekali. Filter keamanannya cukup
+            # dari regex keyword label di bawah + scope ke post_body.
             label = a.get_text(strip=True)
             if re.search(
-                r'chapter|prolog|prologue|epilog|epilogue|illustrasi|afterword|extra|bonus|kata penutup',
+                r'chapter|bab|prolog|prologue|epilog|epilogue|ilustrasi|illustrasi|'
+                r'afterword|extra|bonus|kata penutup|episode|eps\b',
                 label, re.IGNORECASE
             ):
                 seen.add(href)
@@ -397,7 +504,7 @@ def get_volumes_from_toc_agungx(toc_url, soup):
     # Daftar chapter ditandai lewat link ke /chapter/<id>, labelnya sendiri
     # sudah memuat "Volume N ..." jadi gak perlu ngelacak heading terpisah.
     for a in soup.find_all('a', href=re.compile(r'/chapter/\d+')):
-        href = a.get('href')
+        href = fix_doubled_url(a.get('href'))
         if not href:
             continue
         full_url = urljoin(f"{scheme}://{domain}", href)
@@ -547,14 +654,16 @@ def _parse_madara_ajax_chapters(ajax_soup, base_url):
             chap_list = []
             for sub_li in sub_ul.find_all('li'):
                 a = sub_li.find('a')
-                if a and a.get('href'):
-                    chap_list.append((urljoin(base_url, a['href']), a.get_text(strip=True)))
+                href = fix_doubled_url(a.get('href')) if a else None
+                if href:
+                    chap_list.append((urljoin(base_url, href), a.get_text(strip=True)))
             chap_list.reverse()  # AJAX: terbaru -> terlama
             volumes[vol_num] = chap_list
         else:
             a = li.find('a')
-            if a and a.get('href'):
-                flat_chapters.append((urljoin(base_url, a['href']), a.get_text(strip=True)))
+            href = fix_doubled_url(a.get('href')) if a else None
+            if href:
+                flat_chapters.append((urljoin(base_url, href), a.get_text(strip=True)))
 
     if flat_chapters:
         flat_chapters.reverse()
@@ -607,7 +716,7 @@ def _madara_crawl_next(start_url):
             log(f"   🔗 {count} chapter ditemukan lewat crawl Next... (terakhir: {label})")
 
         next_link = _find_link_by_text(cur_soup, [r'^next$'])
-        next_href = next_link.get('href') if next_link else None
+        next_href = fix_doubled_url(next_link.get('href')) if next_link else None
         current_url = urljoin(base, next_href) if next_href else None
 
     return volumes
@@ -615,7 +724,8 @@ def _madara_crawl_next(start_url):
 
 def _get_volumes_from_toc_madara_next_crawl(toc_url, soup, story_title):
     read_first = _find_link_by_text(soup, [r'read\s*first'])
-    if read_first is None or not read_first.get('href'):
+    read_first_href = fix_doubled_url(read_first.get('href')) if read_first else None
+    if not read_first_href:
         raise RuntimeError(
             "Tidak menemukan tombol 'Read First' di halaman index Madara."
         )
@@ -623,7 +733,7 @@ def _get_volumes_from_toc_madara_next_crawl(toc_url, soup, story_title):
     domain = urlparse(toc_url).netloc
     scheme = urlparse(toc_url).scheme
     base = f"{scheme}://{domain}"
-    start_url = urljoin(base, read_first['href'])
+    start_url = urljoin(base, read_first_href)
 
     volumes = _madara_crawl_next(start_url)
     if not volumes:
@@ -723,6 +833,459 @@ def get_volumes_from_toc_madara(toc_url, soup):
 
 
 # ==========================================
+# MODE OTOMATIS (KDTNOVELS.NET): PARSING INDEX -> PER VOLUME
+# ==========================================
+# Halaman index KDTNovels ("/series/<slug>/") nampilin SEMUA link chapter
+# langsung di HTML (gak lewat AJAX), dengan teks link berpola
+# "Vol. X Ch. Y <Judul> <Tanggal>". Urutan tampilnya TERBARU -> TERLAMA,
+# jadi kita gak boleh andalkan urutan tampil -- nomor volume & chapter
+# diparse dari teks link itu sendiri lalu diurutkan ulang.
+_KDT_VOLCHAP_RE = re.compile(r'Vol\.?\s*(\d+)\s*Ch\.?\s*([\d.]+)', re.IGNORECASE)
+
+
+# Halaman index KDTNovels ("/series/<slug>/") nampilin SEMUA link chapter
+# langsung di HTML (gak lewat AJAX), dengan teks link berpola
+# "Vol. X Ch. Y <Judul> <Tanggal>". Urutan tampilnya TERBARU -> TERLAMA,
+# jadi kita gak boleh andalkan urutan tampil -- nomor volume & chapter
+# diparse dari teks link itu sendiri lalu diurutkan ulang.
+_KDT_VOLCHAP_RE = re.compile(r'Vol\.?\s*(\d+)\s*Ch\.?\s*([\d.]+)', re.IGNORECASE)
+
+# Tanggal rilis ("December 11, 2025") nempel LANGSUNG di belakang judul
+# chapter tanpa pemisah di HTML-nya (beda <span>/<div> tanpa spasi) ->
+# harus dibuang manual, bukan cuma dipisah spasi.
+_KDT_DATE_SUFFIX_RE = re.compile(
+    r'\s*(January|February|March|April|May|June|July|August|September|'
+    r'October|November|December)\s+\d{1,2},\s*\d{4}\s*$',
+    re.IGNORECASE
+)
+
+
+def get_story_title_kdtnovels(soup):
+    h1 = soup.find('h1')
+    if h1:
+        return h1.get_text(strip=True)
+    og_title = soup.find('meta', attrs={'property': 'og:title'})
+    if og_title and og_title.get('content'):
+        return re.split(r'\s*-\s*Light Novel', og_title['content'])[0].strip()
+    return "Novel"
+
+
+def get_volumes_from_toc_kdtnovels(toc_url, soup):
+    story_title = get_story_title_kdtnovels(soup)
+    domain = urlparse(toc_url).netloc
+
+    raw = {}  # href -> (vol_num, chap_num_float, label)
+    for a in soup.find_all('a'):
+        href = fix_doubled_url(a.get('href'))
+        if not href:
+            continue
+        # Pakai separator spasi: potongan "Vol. X Ch. Y", judul, & tanggal
+        # ada di elemen/text-node terpisah tanpa spasi di HTML aslinya,
+        # jadi tanpa separator ini bakal nempel jadi satu kata (mis.
+        # "Ch. 0.5Illustrations").
+        label = a.get_text(" ", strip=True)
+        label = re.sub(r'\s+', ' ', label)
+        if not label:
+            continue
+        m = _KDT_VOLCHAP_RE.search(label)
+        if not m:
+            continue
+        link_domain = urlparse(href).netloc
+        if link_domain and link_domain != domain:
+            continue
+        vol_num = int(m.group(1))
+        try:
+            chap_num = float(m.group(2))
+        except ValueError:
+            continue
+
+        # Bersihin label jadi cuma judul chapter-nya doang: buang prefix
+        # "Vol. X Ch. Y" di depan & tanggal rilis di belakang. Dipakai
+        # sebagai fallback judul kalau parsing judul dari ISI halaman
+        # chapter-nya gagal nemu apa-apa.
+        clean_label = label[m.end():].strip()
+        clean_label = _KDT_DATE_SUFFIX_RE.sub('', clean_label).strip()
+        if not clean_label:
+            clean_label = label
+
+        # href yang sama bisa nongol dobel (mis. tombol pintasan "First
+        # Chapter" / "New Chapter" di atas daftar utama) -- cukup dicatat
+        # sekali aja.
+        raw.setdefault(href, (vol_num, chap_num, clean_label))
+
+    volumes = {}
+    for href, (vol_num, chap_num, label) in raw.items():
+        volumes.setdefault(vol_num, []).append((chap_num, href, label))
+
+    for vol_num in volumes:
+        volumes[vol_num].sort(key=lambda t: t[0])
+        volumes[vol_num] = [(href, label) for _chap_num, href, label in volumes[vol_num]]
+
+    if not volumes:
+        raise RuntimeError(
+            "Tidak menemukan link chapter berpola 'Vol. X Ch. Y' di halaman "
+            "index KDTNovels ini."
+        )
+
+    return story_title, volumes
+
+
+_KDT_ILLUSTRATION_LABEL_RE = re.compile(r'illustrat|ilustrasi', re.IGNORECASE)
+
+
+def get_kdtnovels_volume_covers(volumes):
+    """Buat tiap volume, cari chapter berlabel 'Illustrations'/'Ilustrasi'
+    (biasanya Ch. 0.5) lalu ambil gambar PERTAMA di halaman itu sebagai
+    cover volume tsb. Beda volume = beda halaman ilustrasi = beda cover,
+    gak kayak og:image novel yang sama persis buat semua volume. Balikin
+    dict {vol_num: (cover_url, referer_url)} -- referer_url (halaman
+    ilustrasinya sendiri) WAJIB dikirim balik pas fetch gambar covernya,
+    soalnya CDN gambar situs ini nolak (403) request tanpa Referer yang
+    cocok. Volume yang gak ketemu halaman ilustrasinya gak masuk dict
+    (nanti fallback ke og:image umum)."""
+    covers = {}
+    for vol_num, entries in volumes.items():
+        illus_url = None
+        for href, label in entries:
+            if _KDT_ILLUSTRATION_LABEL_RE.search(label):
+                illus_url = href
+                break
+        if not illus_url:
+            continue
+        cover = guess_cover_from_first_chapter(illus_url)
+        if cover:
+            covers[vol_num] = (cover, illus_url)
+            log(f"   📸 Cover Volume {vol_num} diambil dari halaman ilustrasi: {illus_url}")
+        else:
+            log(f"   ℹ️ Halaman ilustrasi Volume {vol_num} ketemu tapi gak ada gambarnya.", "WARN")
+    return covers
+
+
+JUNK_SECTION_HEADINGS_KDT = re.compile(
+    r'recommended series|comment|related\s+(post|chapter)|discord',
+    re.IGNORECASE
+)
+
+_KDT_TITLE_HEADING_RE = re.compile(
+    r'^(chapter|bab|prolog(?:ue)?|epilog(?:ue)?|illustrations?|ilustrasi|'
+    r'episode|eps|bonus\s+cerita\s+pendek|extra)\b',
+    re.IGNORECASE
+)
+
+
+def scrape_chapter_kdtnovels(url, soup, fallback_label=None):
+    """Scrape 1 chapter dari kdtnovels.net. `fallback_label` = label yang
+    udah didapat dari halaman index (mis. "Vol. 1 Ch. 1 Judul Bab"),
+    dipakai sebagai cadangan judul kalau gak ketemu heading judul di
+    dalam isi chapter-nya."""
+    container = _find_main_content_container(soup)
+    chapter_title_parts = []
+    elements = []
+
+    if container is not None:
+        for elem in container.find_all(['p', 'img', 'h1', 'h2', 'h3', 'h4', 'h5']):
+            if elem.name in ('h1', 'h2', 'h3', 'h4', 'h5'):
+                heading_text = elem.get_text(strip=True)
+                if not heading_text:
+                    continue
+                if JUNK_SECTION_HEADINGS_KDT.search(heading_text) or JUNK_SECTION_HEADINGS.search(heading_text):
+                    break
+                if _KDT_TITLE_HEADING_RE.match(heading_text):
+                    if heading_text not in chapter_title_parts:
+                        chapter_title_parts.append(heading_text)
+                continue
+
+            if elem.name == 'img':
+                src = elem.get('src')
+                if src:
+                    elements.append({'type': 'img', 'src': urljoin(url, src), 'referer': url})
+                continue
+
+            # Separator spasi + collapse whitespace: beberapa halaman
+            # nulis tiap baris dialog/kalimat dipisah <br> di DALAM
+            # satu <p> yang sama (bukan <p> terpisah). Tanpa separator
+            # ini, get_text() nyambungin baris-baris itu TANPA spasi.
+            text = elem.get_text(' ', strip=True)
+            text = re.sub(r'\s+', ' ', text).strip()
+            if not text:
+                continue
+            text_lower = text.lower()
+            if any(junk in text_lower for junk in junk_keywords):
+                continue
+            if not elements or elements[-1].get('value') != text:
+                elements.append({'type': 'text', 'value': text})
+
+    if chapter_title_parts:
+        final_title = " - ".join(chapter_title_parts)
+    elif fallback_label:
+        final_title = fallback_label
+    else:
+        h1 = soup.find('h1')
+        final_title = h1.get_text(strip=True) if h1 else "Chapter"
+
+    return final_title, elements
+
+
+# ==========================================
+# LUMINARE TRANSLATIONS (YARNOVEL THEME)
+# ==========================================
+# Situs ini menggunakan WordPress + tema Yarnovel dengan content protection
+# di HTML, tapi punya WP REST API yang bisa diakses untuk mengambil daftar
+# chapter dan kontennya.
+
+LUMINARE_REST_BASE = "https://{domain}/wp-json/wp/v2"
+
+
+def _luminare_get_series_id(toc_url):
+    """Ambil series_id dari URL halaman index Luminare via WP REST API."""
+    parsed = urlparse(toc_url)
+    domain = parsed.netloc
+    # Ekstrak slug dari URL: /series/<slug>/ atau /series/<slug>/...
+    path_parts = [p for p in parsed.path.split('/') if p]
+    if len(path_parts) >= 2 and path_parts[0] == 'series':
+        slug = path_parts[1]
+    else:
+        slug = path_parts[-1] if path_parts else ''
+    api_url = f"{LUMINARE_REST_BASE.format(domain=domain)}/series?slug={slug}"
+    res = fetch_url(api_url)
+    data = res.json()
+    if data and isinstance(data, list):
+        return domain, data[0]['id'], data[0]['title']['rendered']
+    raise RuntimeError(f"Gagal menemukan series ID untuk slug '{slug}'")
+
+
+def _luminare_fetch_all_chapters(domain, series_id):
+    """Fetch semua chapter via WP REST API (handle pagination + client-side filter by series_id)."""
+    all_chapters = []
+    page = 1
+    target_series_id = int(series_id)
+    while True:
+        api_url = (
+            f"{LUMINARE_REST_BASE.format(domain=domain)}/chapter"
+            f"?per_page=100&page={page}"
+        )
+        res = fetch_url(api_url)
+        data = res.json()
+        if not isinstance(data, list) or len(data) == 0:
+            break
+        for ch in data:
+            meta = ch.get('meta', {})
+            ch_series_id = meta.get('series_id')
+            if ch_series_id is not None and int(ch_series_id) == target_series_id:
+                all_chapters.append(ch)
+
+        # Cek header X-WP-TotalPages
+        total_pages = int(res.headers.get('X-WP-TotalPages', 1))
+        if page >= total_pages:
+            break
+        page += 1
+    return all_chapters
+
+
+def get_volumes_from_toc_luminare(toc_url, soup):
+    """Parse halaman index Luminare via WP REST API."""
+    domain, series_id, story_title = _luminare_get_series_id(toc_url)
+    log(f"   🔎 Luminare series ID: {series_id}")
+
+    chapters = _luminare_fetch_all_chapters(domain, series_id)
+    log(f"   📖 {len(chapters)} chapter ditemukan via REST API")
+
+    volumes = {}
+    for ch in chapters:
+        meta = ch.get('meta', {})
+        group = meta.get('chapter_group', '')
+        chap_idx = meta.get('chapter_index', 0)
+        chap_title = meta.get('chapter_title', '') or ''
+        chap_sub = meta.get('chapter_subtitle', '') or ''
+        link = ch.get('link', '')
+
+        if not link:
+            continue
+
+        # Parse nomor volume dari chapter_group ("volume-1" -> 1)
+        vol_match = re.match(r'volume-(\d+)', group, re.IGNORECASE) if group else None
+        if vol_match:
+            vol_num = int(vol_match.group(1))
+        else:
+            vol_num = 1  # default ke volume 1 kalau gak ada info
+
+        label = chap_title.strip()
+        if chap_sub.strip():
+            label = f"{label} {chap_sub.strip()}" if label else chap_sub.strip()
+        if not label:
+            label = f"Chapter {chap_idx}"
+
+        volumes.setdefault(vol_num, [])
+        volumes[vol_num].append((link, label, chap_idx, ch.get('id', 0)))
+
+    # Sort chapters in each volume by post ID ascending (kronologis: bab awal duluan)
+    for vol_num in volumes:
+        volumes[vol_num].sort(key=lambda x: x[3])
+
+    # Strip chapter_index dan post_id dari tuples (jaga kompatibilitas dgn build_pdf_for_urls)
+    for vol_num in volumes:
+        volumes[vol_num] = [(url, label) for url, label, _idx, _id in volumes[vol_num]]
+
+    return story_title, volumes
+
+
+def scrape_chapter_luminare(url, soup):
+    """Scrape chapter Luminare via WP REST API (konten di HTML diproteksi)."""
+    # Ambil post ID dari body class: "postid-15056"
+    body = soup.find('body')
+    post_id = None
+    if body:
+        body_classes = body.get('class', [])
+        for cls in body_classes:
+            m = re.match(r'postid-(\d+)', cls)
+            if m:
+                post_id = int(m.group(1))
+                break
+
+    if not post_id:
+        # Fallback: coba dari shortlink
+        shortlink = soup.find('link', attrs={'rel': 'shortlink'})
+        if shortlink and shortlink.get('href'):
+            m = re.search(r'\?p=(\d+)', shortlink['href'])
+            if m:
+                post_id = int(m.group(1))
+
+    if not post_id:
+        return "Chapter", []
+
+    # Fetch konten via REST API
+    parsed = urlparse(url)
+    domain = parsed.netloc
+    api_url = f"https://{domain}/wp-json/wp/v2/chapter/{post_id}"
+    try:
+        res = fetch_url(api_url)
+        data = res.json()
+    except Exception:
+        return "Chapter", []
+
+    # Build judul
+    meta = data.get('meta', {})
+    chap_title = meta.get('chapter_title', '') or ''
+    chap_sub = meta.get('chapter_subtitle', '') or ''
+    final_title = chap_title.strip()
+    if chap_sub.strip():
+        final_title = f"{final_title} {chap_sub.strip()}" if final_title else chap_sub.strip()
+    if not final_title:
+        final_title = data.get('title', {}).get('rendered', 'Chapter')
+
+    # Parse HTML konten
+    content_html = data.get('content', {}).get('rendered', '')
+    if not content_html:
+        return final_title, []
+
+    content_soup = BeautifulSoup(content_html, 'html.parser')
+    elements = []
+
+    for tag in content_soup.find_all(['p', 'img', 'figure', 'h2', 'h3', 'h4', 'h5']):
+        if tag.name == 'img':
+            # Skip gambar yang sudah diambil dari <figure> induknya
+            if tag.find_parent('figure'):
+                continue
+            src = tag.get('src')
+            if src:
+                elements.append({'type': 'img', 'src': src, 'referer': url})
+        elif tag.name == 'figure':
+            # Figure bisa berisi gallery (beberapa <img>)
+            for img in tag.find_all('img'):
+                src = img.get('src')
+                if src:
+                    elements.append({'type': 'img', 'src': src, 'referer': url})
+        else:
+            text = tag.get_text(' ', strip=True)
+            text = re.sub(r'\s+', ' ', text).strip()
+            if not text:
+                continue
+            text_lower = text.lower()
+            if any(junk in text_lower for junk in junk_keywords):
+                continue
+            if not elements or elements[-1].get('value') != text:
+                elements.append({'type': 'text', 'value': text})
+
+    return final_title, elements
+
+
+# ==========================================
+# MODE OTOMATIS (WORDPRESS.COM / BLOG BIASA): PARSING INDEX -> PER VOLUME
+# ==========================================
+# Blog WordPress.com biasa (mis. *.home.blog) -- ToC-nya cuma heading
+# "Volume N" diikuti link chapter POLOS (gak dibungkus bold kayak pola
+# Blogger). Link chapter dikenali dari pola PERMALINK TANGGAL bawaan
+# WordPress (/yyyy/mm/dd/judul-slug/), bukan dari nama class HTML --
+# otomatis nyaring link navbar/footer/share/Discord yang gak relevan.
+_WP_DATE_PERMALINK_RE = re.compile(r'/\d{4}/\d{2}/\d{2}/')
+
+
+def get_volumes_from_toc_wpcom(toc_url, soup):
+    h1 = soup.find('h1')
+    story_title = h1.get_text(strip=True) if h1 else "Novel"
+    domain = urlparse(toc_url).netloc
+
+    volumes = {}
+    current_vol = None
+    seen = set()
+
+    for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'a']):
+        if tag.name != 'a':
+            text = tag.get_text(strip=True)
+            vol_match = re.match(r'^volume\s*(\d+)', text, re.IGNORECASE)
+            if vol_match:
+                current_vol = int(vol_match.group(1))
+                volumes.setdefault(current_vol, [])
+            continue
+
+        href = fix_doubled_url(tag.get('href'))
+        if not href or current_vol is None or href in seen:
+            continue
+        link_domain = urlparse(href).netloc
+        if link_domain and link_domain != domain:
+            continue
+        if not _WP_DATE_PERMALINK_RE.search(href):
+            continue
+
+        label = tag.get_text(strip=True)
+        if not label:
+            continue
+        seen.add(href)
+        volumes[current_vol].append((href, label))
+
+    if not volumes:
+        raise RuntimeError(
+            "Tidak menemukan link chapter berpola tanggal WordPress "
+            "(/yyyy/mm/dd/) di halaman index ini."
+        )
+
+    return story_title, volumes
+
+
+def get_wpcom_volume_covers(soup):
+    """Blog WordPress.com kayak CClaw nampilin gambar sampul SENDIRI buat
+    tiap volume, persis SEBELUM heading 'Volume N' masing-masing di
+    halaman ToC. Fungsi ini nyatet <img> TERAKHIR yang muncul sebelum tiap
+    heading itu -> dict {vol_num: url_gambar}. Kalau volume tertentu gak
+    punya gambar sebelum headingnya, dia gak masuk dict (nanti fallback ke
+    cover umum/og:image di pemanggilnya)."""
+    covers = {}
+    last_img_src = None
+    for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'img']):
+        if tag.name == 'img':
+            src = tag.get('src')
+            if src:
+                last_img_src = src
+            continue
+        text = tag.get_text(strip=True)
+        vol_match = re.match(r'^volume\s*(\d+)', text, re.IGNORECASE)
+        if vol_match and last_img_src:
+            vol_num = int(vol_match.group(1))
+            covers.setdefault(vol_num, last_img_src)
+    return covers
+
+
+# ==========================================
 # DISPATCHER: MODE OTOMATIS
 # ==========================================
 def get_volumes_from_toc(toc_url):
@@ -740,9 +1303,18 @@ def get_volumes_from_toc(toc_url):
     if is_agungx(toc_url):
         log("   🔎 Terdeteksi sebagai situs AgungX Novel.")
         story_title, volumes = get_volumes_from_toc_agungx(toc_url, soup)
+    elif is_kdtnovels(toc_url):
+        log("   🔎 Terdeteksi sebagai situs KDTNovels.")
+        story_title, volumes = get_volumes_from_toc_kdtnovels(toc_url, soup)
+    elif is_luminare(toc_url) or is_yarnovel(soup):
+        log("   🔎 Terdeteksi sebagai situs Luminare Translations (Yarnovel theme).")
+        story_title, volumes = get_volumes_from_toc_luminare(toc_url, soup)
     elif is_madara(soup):
         log("   🔎 Terdeteksi sebagai situs bertema Madara, crawl via Prev/Next...")
         story_title, volumes = get_volumes_from_toc_madara(toc_url, soup)
+    elif is_wpcom(soup):
+        log("   🔎 Terdeteksi sebagai blog WordPress.com biasa.")
+        story_title, volumes = get_volumes_from_toc_wpcom(toc_url, soup)
     else:
         story_title, volumes = get_volumes_from_toc_blogger(toc_url, soup)
 
@@ -756,9 +1328,26 @@ def get_volumes_from_toc(toc_url):
 # ==========================================
 # SCRAPING SATU CHAPTER: BLOGGER
 # ==========================================
-def scrape_chapter_blogger(url, soup, first_cover_key_holder):
+def _elem_is_bold_styled(elem, text):
+    """True kalau `elem` sendiri tag bold/heading (b/strong/h2/h3), ATAU
+    seluruh isinya cuma satu anak <b>/<strong> yang teksnya PAS sama
+    dengan `text` (satu baris bold utuh, mis. "<p><b>Chapter 1</b></p>").
+    Dipakai buat mastiin paragraf "lanjutan judul" beneran ditulis bold
+    (subtitle), bukan paragraf isi cerita biasa yang kebetulan jadi
+    paragraf pertama setelah judul."""
+    if elem.name in ('b', 'strong', 'h2', 'h3'):
+        return True
+    bold_children = elem.find_all(['b', 'strong'], recursive=False)
+    return len(bold_children) == 1 and bold_children[0].get_text(strip=True) == text
+
+
+def scrape_chapter_blogger(url, soup, first_cover_key_holder, fallback_label=None):
     post_body = soup.find('div', class_=re.compile(r'post-body|entry-content'))
     chapter_title_parts = []
+    # Hitung terpisah berapa kali heading "Chapter N/Prolog/Epilog dst"
+    # ketemu (bukan subtitle nyambung) -- dipakai buat deteksi halaman
+    # "gabungan beberapa chapter" di bawah.
+    num_chapter_headings = 0
     elements = []
 
     if post_body:
@@ -770,27 +1359,43 @@ def scrape_chapter_blogger(url, soup, first_cover_key_holder):
                 img_key = normalize_img_src(src)
                 if first_cover_key_holder['img'] is None:
                     log("   📸 Gambar sampul utama ditemukan, mengunduh...")
-                    first_cover_key_holder['img'] = fetch_image(src)
+                    first_cover_key_holder['img'] = fetch_image(src, referer=url)
                     first_cover_key_holder['key'] = img_key
                     continue
                 if img_key == first_cover_key_holder['key']:
                     continue
-                elements.append({'type': 'img', 'src': src})
+                elements.append({'type': 'img', 'src': src, 'referer': url})
             else:
-                text = elem.get_text(strip=True)
+                # Separator spasi + collapse whitespace: beberapa post
+                # Blogger nulis tiap kalimat/paragraf dipisah <br> di
+                # DALAM satu <p> yang sama (bukan <p> terpisah). Tanpa
+                # separator ini, get_text() nyambungin baris-baris itu
+                # TANPA spasi (mis. "hari libur.Saat ini, aku...").
+                text = elem.get_text(' ', strip=True)
+                text = re.sub(r'\s+', ' ', text).strip()
                 if not text:
                     continue
                 text_lower = text.lower()
                 is_junk = any(junk in text_lower for junk in junk_keywords)
                 if is_junk:
                     continue
-                if re.match(r'^(chapter|prologue|prolog|epilogue|epilog)\s*\d*', text_lower):
+                # Guard panjang teks: judul chapter harusnya pendek (mis.
+                # "Epilog" atau "Chapter 5 - Judulnya"). Kalau paragraf
+                # yang KEBETULAN diawali kata "epilog"/"chapter"/dst itu
+                # panjangnya udah kayak satu chapter penuh (kasus di atas
+                # -- satu <p> gede yang gabungin SEMUA isi bab jadi satu),
+                # itu bukan judul, biarin jatuh ke isi normal di bawah.
+                if len(text) <= 120 and re.match(
+                    r'^(chapter|prologue|prolog|epilogue|epilog|bab)\b\s*\d*\b', text_lower
+                ):
+                    num_chapter_headings += 1
                     if text not in chapter_title_parts:
                         chapter_title_parts.append(text)
                 elif (
                     len(chapter_title_parts) == 1
                     and not elements
                     and not text.startswith(('"', '“', '"', "'", '‘', "'"))
+                    and _elem_is_bold_styled(elem, text)
                 ):
                     if text not in chapter_title_parts:
                         chapter_title_parts.append(text)
@@ -798,11 +1403,22 @@ def scrape_chapter_blogger(url, soup, first_cover_key_holder):
                     if not elements or elements[-1].get('value') != text:
                         elements.append({'type': 'text', 'value': text})
 
-    if chapter_title_parts:
+    # Beberapa post Kaori TL menggabungkan BEBERAPA chapter dalam SATU
+    # halaman (mis. ToC-nya nulis "Chapter 6 - 10" -> 1 URL isinya chapter
+    # 6,7,8,9,10 sekaligus). Kalau direkonstruksi dari heading di dalam
+    # halaman (kayak biasanya), semua heading "Chapter N" yang ketemu bakal
+    # digabung jadi satu judul yang panjang & rancu (mis. "Chapter 6 ... -
+    # Chapter 7: ... - Chapter 10: ..."). Begitu ketemu LEBIH DARI SATU
+    # heading chapter dalam satu halaman, itu tanda halamannya gabungan --
+    # pakai label dari Daftar Isi (fallback_label, mis. "Chapter 6 - 10")
+    # yang udah bersih & akurat, daripada rekonstruksi yang berantakan.
+    if num_chapter_headings >= 2 and fallback_label:
+        final_title = fallback_label
+    elif chapter_title_parts:
         final_title = " - ".join(chapter_title_parts)
     else:
         title_el = soup.find('h1', class_='post-title') or soup.find('h1')
-        final_title = title_el.get_text(strip=True) if title_el else "Chapter"
+        final_title = title_el.get_text(strip=True) if title_el else (fallback_label or "Chapter")
 
     if elements and elements[0]['type'] == 'text':
         first_text = elements[0]['value'].strip().lower()
@@ -844,7 +1460,7 @@ def scrape_chapter_agungx(url, soup):
                 src = tag.get('src')
                 if src:
                     src = urljoin(url, src)
-                    elements.append({'type': 'img', 'src': src})
+                    elements.append({'type': 'img', 'src': src, 'referer': url})
             elif tag.name == 'p':
                 text = tag.get_text(strip=True)
                 if not text:
@@ -861,31 +1477,102 @@ def scrape_chapter_agungx(url, soup):
 # ==========================================
 # SCRAPING SATU CHAPTER: MADARA
 # ==========================================
+_WIDGET_ANCESTOR_RE = re.compile(
+    r'widget|sidebar|popular|trending|related|similar|latest[-_]?(post|update|release)|'
+    r'manga-list|c-related|recommend',
+    re.IGNORECASE
+)
+
+
+def _is_inside_widget(el):
+    """True kalau `el` (atau salah satu leluhurnya, TIDAK TERMASUK
+    <body>/<html>) ada di dalam section widget/sidebar (mis. 'Paling
+    Populer', 'Related Manga', 'Latest Update' dst). Container chapter
+    asli gak pernah nempel di dalam widget kayak gini, jadi ini dipakai
+    buat DISKUALIFIKASI kandidat container yang salah nyasar ke situ.
+
+    PENTING: berhenti pas ketemu <body>/<html>, JANGAN ikut cek class
+    di tag itu -- banyak tema WordPress (termasuk Madara) naruh class
+    layout umum di <body> kayak 'right-sidebar'/'left-sidebar'/
+    'no-sidebar' (penanda ada-gaknya sidebar di LAYOUT halaman, bukan
+    widget beneran). Karena <body> adalah leluhur SEMUA elemen di
+    halaman, kalau ini ikut dicek, class layout kayak itu bakal
+    mendiskualifikasi SEMUA kandidat container sekaligus -> 0 kata, 0
+    gambar di semua chapter (bug yang sempat kejadian).
+
+    PENTING #2: `el` SENDIRI juga dicek, bukan cuma leluhurnya. Kalau
+    widget "Related"/"Populer"/"Latest Update"-nya SENDIRI yang
+    kebetulan punya class ketangkep salah satu pola pencarian (mis.
+    'text-left', 'entry-content'), dia harus tetep didiskualifikasi
+    walau bukan dia yang jadi LELUHUR siapa-siapa. Tanpa ini, widget
+    gede berisi sinopsis banyak novel lain bisa ke-anggep jadi
+    'kontainer chapter', bikin jumlah kata meledak (ratusan ribu kata
+    buat satu chapter)."""
+    for candidate in [el] + list(el.parents):
+        if not hasattr(candidate, 'get'):
+            continue
+        if getattr(candidate, 'name', None) in ('body', 'html'):
+            break
+        cls = candidate.get('class')
+        el_id = candidate.get('id') or ''
+        combined = ' '.join(cls) if cls else ''
+        combined += ' ' + el_id
+        if _WIDGET_ANCESTOR_RE.search(combined):
+            return True
+    return False
+
+
 def _find_main_content_container(soup):
     """Cari elemen yang jadi 'badan' chapter. Coba class umum tema
     Madara/Mangabooth dulu (reading-content, text-left, dst) — ini bikin
     halaman yang isinya CUMA gambar (mis. halaman ilustrasi tanpa
     paragraf sama sekali) tetep ketemu kontainernya. Kalau gak nemu,
     fallback ke heuristik lama: div/article dengan <p> ATAU <img> anak
-    langsung terbanyak."""
+    langsung terbanyak.
+
+    PENTING: tiap kandidat yang ketemu divalidasi dulu -- kalau dia
+    (atau leluhurnya) ada di dalam widget/sidebar kayak 'Paling
+    Populer'/'Related'/'Latest Update', dia DISKUALIFIKASI dan lanjut
+    coba kandidat berikutnya. Class kayak 'text-left'/'post-body' itu
+    generik banget dan bisa nyangkut di elemen widget yang gak
+    berhubungan sama chapter yang lagi di-scrape -- tanpa validasi ini,
+    gambar novel lain di widget itu ketauan ke-anggep punya chapter ini
+    (nyasar ke bab yang salah)."""
     for cls_pattern in (
         r'reading-content', r'text-left', r'c-blog__body',
         r'entry-content', r'chapter-content', r'cha-content', r'post-body',
+        r'reading-detail', r'ep-content', r'entry-summary', r'epcontent',
     ):
-        el = soup.find(['div', 'article'], class_=re.compile(cls_pattern, re.IGNORECASE))
-        if el is not None and el.find_all(['p', 'img']):
-            return el
+        for el in soup.find_all(['div', 'article'], class_=re.compile(cls_pattern, re.IGNORECASE)):
+            text_el = el.get_text()
+            if 'Please enter your username' in text_el or 'Back to Archives' in text_el:
+                continue
+            if el.find_all('p') or el.find_all('img'):
+                # Prefer inner/deeper matching container if any exists,
+                # to avoid picking up outer wrappers like reading-content-wrap
+                for deeper in el.find_all(['div', 'article'], class_=re.compile(cls_pattern, re.IGNORECASE)):
+                    if deeper is el:
+                        continue
+                    if 'Please enter your username' in deeper.get_text() or 'Back to Archives' in deeper.get_text():
+                        continue
+                    if deeper.find_all('p') or deeper.find_all('img'):
+                        el = deeper
+                return el
 
     best = None
     best_score = 0
     for tag in soup.find_all(['div', 'article']):
+        if _is_inside_widget(tag):
+            continue
         direct_p = tag.find_all('p', recursive=False)
         direct_img = tag.find_all('img', recursive=False)
         # Kontainer valid kalau punya minimal 2 paragraf langsung, ATAU
         # minimal 2 gambar langsung (buat halaman ilustrasi tanpa teks).
-        if len(direct_p) < 2 and len(direct_img) < 2:
+        if len(direct_p) < 1 and len(direct_img) < 1:
             continue
         score = sum(len(p.get_text(strip=True)) for p in direct_p) + len(direct_img) * 80
+        if score > 150000:
+            continue
         if score > best_score:
             best = tag
             best_score = score
@@ -895,18 +1582,100 @@ def _find_main_content_container(soup):
 JUNK_SECTION_HEADINGS = re.compile(
     r'support kami|server discord|paling populer|comments?\s+for\s+chapter|'
     r'light novel discussion|leave a reply|related\s+(post|chapter)|'
-    r'discord|donasi|discussion',
+    r'discord|donasi|discussion|kami menghargai privasi|iklan adalah|archnovel|'
+    r'please enter your username|receive a link to create a new password|back to archives',
+    re.IGNORECASE
+)
+
+_CHAPTER_TITLE_KEYWORD_RE = re.compile(
+    r'^(bab|chapter|prolog|prologue|epilog|epilogue|ilustrasi|illustrations?|'
+    r'take|episode|eps|bonus\s+cerita\s+pendek|extra)\b',
+    re.IGNORECASE
+)
+
+# Kata kunci "label pendek" chapter non-nomor -- dipakai buat motong
+# label h1 yang keulangan judul novel di depannya (lihat pemakaiannya
+# di scrape_chapter_madara). Beda dari _CHAPTER_TITLE_KEYWORD_RE di
+# atas (yang match di AWAL string doang, ^...), regex ini SENGAJA
+# nyari di mana AJA di tengah string (gak dianchor ^) justru karena
+# tujuannya nemuin titik potong, bukan validasi apakah keseluruhan
+# baris itu judul.
+_SHORT_LABEL_KEYWORDS_RE = re.compile(
+    r'(ilustrasi|illustrations?|episode|eps\b|bonus\s+cerita\s+pendek|extra)',
     re.IGNORECASE
 )
 
 
+def _extract_pure_bold_lines(p_tag):
+    """Kalau `p_tag` isinya CUMA tag <b>/<strong> (masing-masing dianggap
+    1 "baris"), boleh dipisah <br>, TANPA ada teks polos lain nempel
+    langsung di dalamnya -> balikin list teks tiap baris bold itu secara
+    berurutan. Ini nangkep kasus beberapa penerjemah nulis judul+subtitle
+    chapter dalam SATU <p> yang sama (mis. "<p><b>Take 1</b><br><b>Sub
+    Judul</b></p>") alih-alih 2 <p> terpisah kayak biasanya. Balikin None
+    kalau paragrafnya BUKAN pola murni bold-doang ini (mis. paragraf isi
+    cerita biasa yang cuma kebetulan ada 1-2 kata di-bold di tengah
+    kalimat) -> biar tetap diproses lewat jalur teks normal seperti biasa."""
+    lines = []
+    for child in p_tag.children:
+        if isinstance(child, NavigableString):
+            if child.strip():
+                return None
+            continue
+        if child.name == 'br':
+            continue
+        if child.name in ('b', 'strong'):
+            text = child.get_text(strip=True)
+            if text:
+                lines.append(text)
+            continue
+        return None
+    return lines or None
+
+
+def _flatten_content_container(parent):
+    """Ambil elemen isi dari `parent` secara rekursif dengan mempertahankan
+    urutan DOM aslinya. Elemen pembungkus (<div>, <p>/<li> yang berisi blok
+    atau gambar lain) di-perluas ke anak-anaknya; elemen "daun" (blok teks
+    tanpa turunan blok/img, tag <img>, heading) langsung masuk hasil. Ini
+    bikin gambar & paragraf yang berselang-seling di dalam nested <p>
+    (khas hasil import dari blogspot) urutannya tetep bener."""
+    items = []
+    for child in parent.find_all(True, recursive=False):
+        name = child.name
+        if name in ('script', 'style', 'ins', 'button', 'iframe'):
+            continue
+        if name == 'div':
+            div_text = child.get_text(strip=True)
+            if 'privasi' in div_text.lower() or 'iklan' in div_text.lower() or 'archnovel' in div_text.lower():
+                continue
+        # Kalau masih ada blok/tag penting di dalamnya, turun dulu
+        if child.find(['p', 'li', 'div', 'img', 'h2', 'h3', 'h4', 'h5']):
+            items.extend(_flatten_content_container(child))
+        else:
+            items.append(child)
+    return items
+
+
 def scrape_chapter_madara(url, soup):
+    # Hapus elemen iklan/disclaimer privasi ArchNovel jika ada di dalam soup
+    for adv in soup.find_all(text=re.compile(r'Kami menghargai privasi|iklan adalah satu-satunya', re.IGNORECASE)):
+        parent = adv.parent
+        if parent:
+            parent.decompose()
+
     container = _find_main_content_container(soup)
     chapter_title_parts = []
     elements = []
 
     if container is not None:
-        for elem in container.find_all(['p', 'img', 'h2', 'h3', 'h4', 'h5']):
+        targets = _flatten_content_container(container)
+        for elem in targets:
+            if elem.name == 'div':
+                # Periksa apakah div ini berisi teks asli atau iklan/disclaimer
+                div_text = elem.get_text(strip=True)
+                if 'privasi' in div_text.lower() or 'iklan' in div_text.lower() or 'archnovel' in div_text.lower():
+                    continue
             if elem.name in ('h2', 'h3', 'h4', 'h5'):
                 heading_text = elem.get_text(strip=True)
                 if JUNK_SECTION_HEADINGS.search(heading_text):
@@ -916,17 +1685,114 @@ def scrape_chapter_madara(url, soup):
                     break
                 continue
 
+            # Ekstrak <img> yang nempel di dalam <p> (mis. <p><img ...></p>),
+            # HANYA kalau paragrafnya gak punya blok turunan (div/p/li).
+            # Kalau ada blok turunan (HTML dari blogspot sering NESTED p),
+            # elemen ini adalah wrapper; turun rekursif biar urutan teks dan
+            # gambar sesuai posisi aslinya di DOM (jangan hog semua gambar ke
+            # depan teks).
+            nested_block = elem.find(['div', 'p', 'li', 'h2', 'h3', 'h4', 'h5'])
+            if elem.name == 'p' and elem.find_all('img') and nested_block:
+                sub_targets = _flatten_content_container(elem)
+                for sub_elem in sub_targets:
+                    sub_text = sub_elem.get_text(' ', strip=True)
+                    if sub_text:
+                        if (
+                            any(junk in sub_text.lower() for junk in junk_keywords)
+                            or 'privasi' in sub_text.lower()
+                            or 'iklan' in sub_text.lower()
+                            or 'password' in sub_text.lower()
+                            or 'username or email' in sub_text.lower()
+                        ):
+                            continue
+                        if not elements or elements[-1].get('value') != sub_text:
+                            elements.append({'type': 'text', 'value': sub_text})
+                continue
+            if elem.name == 'p' and elem.find_all('img'):
+                for p_img in elem.find_all('img'):
+                    src = p_img.get('src')
+                    if src:
+                        abs_src = urljoin(url, src)
+                        parent_a = p_img.find_parent('a')
+                        if parent_a and parent_a.get('href'):
+                            href_abs = urljoin(url, parent_a['href'])
+                            cur_slug = url.split('/manga/')[-1].split('/')[0] if '/manga/' in url else None
+                            href_slug = href_abs.split('/manga/')[-1].split('/')[0] if '/manga/' in href_abs else None
+                            if cur_slug and href_slug and cur_slug != href_slug:
+                                continue
+                        elements.append({'type': 'img', 'src': abs_src, 'referer': url})
+                # Hapus <img> dari <p> biar teksnya aja yang diproses di bawah
+                for p_img in elem.find_all('img'):
+                    p_img.decompose()
+
             if elem.name == 'img':
                 src = elem.get('src')
                 if src:
-                    elements.append({'type': 'img', 'src': urljoin(url, src)})
+                    abs_src = urljoin(url, src)
+                    # Jaring pengaman terakhir: kalau <img> ini dibungkus
+                    # <a> yang link-nya nunjuk ke MANGA LAIN (slug beda
+                    # dari halaman yang lagi diproses), ini hampir pasti
+                    # thumbnail widget "Related"/"Paling Populer" yang
+                    # entah gimana kebawa masuk container -> skip, biar
+                    # gak nyasar jadi gambar milik chapter ini.
+                    parent_a = elem.find_parent('a')
+                    if parent_a and parent_a.get('href'):
+                        href_abs = urljoin(url, parent_a['href'])
+                        cur_slug = url.split('/manga/')[-1].split('/')[0] if '/manga/' in url else None
+                        href_slug = href_abs.split('/manga/')[-1].split('/')[0] if '/manga/' in href_abs else None
+                        if cur_slug and href_slug and cur_slug != href_slug:
+                            continue
+                    elements.append({'type': 'img', 'src': abs_src, 'referer': url})
                 continue
 
-            text = elem.get_text(strip=True)
+            # Kasus khusus: paragraf yang isinya beberapa baris bold
+            # digabung jadi SATU <p> (mis. "Take 1" lalu "Pertunjukan
+            # Dimulai" dipisah <br>, bukan 2 <p> terpisah). Kalau
+            # dibiarkan lewat jalur teks normal di bawah, dua baris itu
+            # bakal ke-gabung tanpa spasi jadi satu string aneh dan gak
+            # kedetect sebagai judul sama sekali. Pecah dulu jadi
+            # baris-baris terpisah, proses satu-satu pakai logika yang
+            # sama kayak baris bold biasa.
+            bold_lines = _extract_pure_bold_lines(elem) if elem.name == 'p' else None
+            if bold_lines is not None:
+                for line in bold_lines:
+                    line_lower = line.lower()
+                    if any(junk in line_lower for junk in junk_keywords):
+                        continue
+                    if _CHAPTER_TITLE_KEYWORD_RE.match(line_lower):
+                        if line not in chapter_title_parts:
+                            chapter_title_parts.append(line)
+                        continue
+                    if (
+                        len(chapter_title_parts) == 1
+                        and not elements
+                        and not line.startswith(('"', '“', '"', "'", '‘', "'"))
+                    ):
+                        if line not in chapter_title_parts:
+                            chapter_title_parts.append(line)
+                        continue
+                    if not elements or elements[-1].get('value') != line:
+                        elements.append({'type': 'text', 'value': line})
+                continue
+
+            # Separator spasi + collapse whitespace: beberapa post
+            # (situs Madara/WP) nulis tiap kalimat/baris dialog dipisah
+            # <br> di DALAM satu <p> yang sama (bukan <p> terpisah).
+            # Tanpa separator ini, get_text() nyambungin baris-baris itu
+            # TANPA spasi (mis. "...AnimeRuang klub pecinta anime...",
+            # atau dialog beruntun "Sihir Cantik!""Waaah! Ayo...").
+            text = elem.get_text(' ', strip=True)
+            text = re.sub(r'\s+', ' ', text).strip()
             if not text:
                 continue
             text_lower = text.lower()
-            if any(junk in text_lower for junk in junk_keywords):
+            if (
+                any(junk in text_lower for junk in junk_keywords)
+                or 'privasi' in text_lower
+                or 'iklan' in text_lower
+                or 'password' in text_lower
+                or 'username or email' in text_lower
+            ):
                 continue
 
             # Paragraf yang isinya SATU baris bold utuh (mis. "**Bab 1**")
@@ -936,8 +1802,22 @@ def scrape_chapter_madara(url, soup):
                 len(bold_children) == 1
                 and bold_children[0].get_text(strip=True) == text
             )
-            if is_full_bold_line and re.match(
-                r'^(bab|chapter|prolog|prologue|epilog|epilogue|ilustrasi)\b', text_lower
+            if is_full_bold_line and _CHAPTER_TITLE_KEYWORD_RE.match(text_lower):
+                if text not in chapter_title_parts:
+                    chapter_title_parts.append(text)
+                continue
+
+            # Baris bold KEDUA persis setelah judul chapter (mis. "Take 4"
+            # lalu "Pesta Teh") -> dianggap subtitle, bukan isi cerita.
+            # Syarat sama kayak di scrape_chapter_blogger: baris judul
+            # utama sudah ketemu (persis 1), belum ada elemen isi lain
+            # yang kesimpan, teksnya bukan dialog (gak diawali tanda
+            # kutip), dan baris ini sendiri beneran satu baris bold utuh.
+            if (
+                len(chapter_title_parts) == 1
+                and not elements
+                and not text.startswith(('"', '“', '"', "'", '‘', "'"))
+                and is_full_bold_line
             ):
                 if text not in chapter_title_parts:
                     chapter_title_parts.append(text)
@@ -953,6 +1833,16 @@ def scrape_chapter_madara(url, soup):
         h1_text = h1.get_text(strip=True) if h1 else "Chapter"
         label_match = re.search(r'-\s*volume\s*\d+\s*-\s*(.+)$', h1_text, re.IGNORECASE)
         final_title = label_match.group(1).strip() if label_match else h1_text
+        # Kadang situs sumber nulis h1-nya dengan judul novel yang
+        # KEULANG lagi sebelum label singkatnya, mis. "<Judul Novel
+        # Panjang> - Volume 2 - <Judul Novel Panjang> Ilustrasi v2" ->
+        # bikin judul entri Daftar Isi kepanjangan banget. Kalau salah
+        # satu kata kunci "label pendek" ini ketemu di tengah/akhir
+        # label, potong biar cuma mulai dari situ ke depan aja (buang
+        # judul novel yang keulang di depannya).
+        short_match = _SHORT_LABEL_KEYWORDS_RE.search(final_title)
+        if short_match:
+            final_title = final_title[short_match.start():].strip()
 
     return final_title, elements
 
@@ -974,7 +1864,7 @@ def truncate_for_toc(pdf, text, max_width):
 # ==========================================
 # SCRAPING + BUILD PDF UNTUK SATU BATCH LINK
 # ==========================================
-def build_pdf_for_urls(urls, output_path, cover_image_url=None):
+def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None, cover_referer=None):
     if SKIP_EXISTING_PDF and os.path.exists(output_path):
         log(f"   ⏭️ Dilewati (PDF sudah ada): {output_path}")
         STATS["volume_skip"] += 1
@@ -996,22 +1886,42 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None):
     # novel (og:image), bukan dari dalam isi chapter.
     if cover_image_url:
         log("   📸 Mengunduh gambar sampul novel...")
-        first_cover_img = fetch_image(cover_image_url)
+        first_cover_img = fetch_image(cover_image_url, referer=cover_referer)
 
     for index, url in enumerate(urls, start=1):
         t_start_chapter = time.time()
         log(f"   [{index}/{len(urls)}] Scraping: {url}")
 
-        try:
-            res = fetch_url(url)
-        except Exception as e:
-            log(f"   ⚠️ Gagal koneksi ({e}), dilewati.", "WARN")
+        # Retry beberapa kali sebelum nyerah. Kadang server blog (Blogger
+        # dkk) sempat ngasih status error sesaat (mis. 404/5xx) padahal
+        # halamannya sebenarnya valid -- biasanya gara-gara request
+        # beruntun terlalu cepat ke domain yang sama. Jeda dikit + coba
+        # lagi seringnya langsung berhasil.
+        MAX_RETRY = 3
+        res = None
+        last_error = None
+        for attempt in range(1, MAX_RETRY + 1):
+            try:
+                res = fetch_url(url)
+            except Exception as e:
+                last_error = f"koneksi gagal: {e}"
+                res = None
+            else:
+                if res.status_code == 200:
+                    break
+                last_error = f"status {res.status_code}"
+            if attempt < MAX_RETRY:
+                log(f"   ↻ Percobaan {attempt} gagal ({last_error}), coba lagi...", "WARN")
+                time.sleep(2 * attempt)
+
+        if res is None:
+            log(f"   ⚠️ Gagal koneksi ({last_error}) setelah {MAX_RETRY}x percobaan, dilewati.", "WARN")
             STATS["chapter_gagal"] += 1
-            STATS["errors"].append(f"{url} -> koneksi gagal: {e}")
+            STATS["errors"].append(f"{url} -> koneksi gagal: {last_error}")
             continue
 
         if res.status_code != 200:
-            log(f"   ⚠️ Status {res.status_code}, dilewati.", "WARN")
+            log(f"   ⚠️ Status {res.status_code} setelah {MAX_RETRY}x percobaan, dilewati.", "WARN")
             STATS["chapter_gagal"] += 1
             STATS["errors"].append(f"{url} -> status {res.status_code}")
             continue
@@ -1020,10 +1930,16 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None):
 
         if is_agungx(url):
             final_title, elements = scrape_chapter_agungx(url, soup)
-        elif is_madara(soup):
+        elif is_kdtnovels(url):
+            fallback_label = url_labels.get(url) if url_labels else None
+            final_title, elements = scrape_chapter_kdtnovels(url, soup, fallback_label=fallback_label)
+        elif is_luminare(url) or is_yarnovel(soup):
+            final_title, elements = scrape_chapter_luminare(url, soup)
+        elif is_madara(soup) or is_wpcom(soup):
             final_title, elements = scrape_chapter_madara(url, soup)
         else:
-            final_title, elements = scrape_chapter_blogger(url, soup, first_cover_key_holder)
+            fallback_label = url_labels.get(url) if url_labels else None
+            final_title, elements = scrape_chapter_blogger(url, soup, first_cover_key_holder, fallback_label=fallback_label)
             if first_cover_img is None and first_cover_key_holder['img'] is not None:
                 first_cover_img = first_cover_key_holder['img']
 
@@ -1049,6 +1965,34 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None):
         pdf.add_page()
         pdf.image(first_cover_img, x=0, y=0, w=210, h=297)
 
+    # ---------- DAFTAR ISI (bisa lebih dari 1 halaman) ----------
+    # Kapasitas per halaman dihitung dari tinggi baris entri yang FIXED
+    # (cell 8mm + ln 1.5mm = 9.5mm, karena truncate_for_toc udah jamin
+    # tiap judul selalu 1 baris), dibagi sisa ruang halaman sampai batas
+    # bawah (margin bawah 20mm). Halaman TOC pertama mulai dari y=45
+    # (di bawah heading "DAFTAR ISI"), halaman TOC lanjutan mulai dari
+    # y=20 (margin atas biasa).
+    TOC_ROW_HEIGHT = 9.5
+    TOC_PAGE_BOTTOM_Y = 297 - 20
+    TOC_FIRST_PAGE_START_Y = 45
+    TOC_OTHER_PAGE_START_Y = 20
+    # -1 baris sebagai margin pengaman: kalau jumlah bab PAS banget sama
+    # kapasitas hitungan (mis. 24 bab, kapasitas hitung 24), baris
+    # terakhir jatuh persis di batas bawah halaman (page_break_trigger)
+    # dan FPDF kadang masih nge-trigger auto page-break di titik situ
+    # (nabrak/numpuk ke halaman bab pertama). Margin 1 baris ini bikin
+    # perhitungan reservasi halaman TOC gak pernah mepet ke batas.
+    toc_capacity_first = max(1, int((TOC_PAGE_BOTTOM_Y - TOC_FIRST_PAGE_START_Y) // TOC_ROW_HEIGHT) - 1)
+    toc_capacity_other = max(1, int((TOC_PAGE_BOTTOM_Y - TOC_OTHER_PAGE_START_Y) // TOC_ROW_HEIGHT) - 1)
+
+    num_chapters = len(chapters_data)
+    if num_chapters <= toc_capacity_first:
+        toc_pages_needed = 1
+    else:
+        toc_pages_needed = 1 + math.ceil(
+            (num_chapters - toc_capacity_first) / toc_capacity_other
+        )
+
     pdf.add_page()
     pdf.set_font("DejaVu", 'B', 18)
     pdf.set_text_color(0, 0, 0)
@@ -1057,6 +2001,16 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None):
     pdf.line(pdf.get_x(), pdf.get_y(), 190, pdf.get_y())
     pdf.ln(10)
     toc_start_page = pdf.page_no()
+
+    # Reservasi halaman KOSONG tambahan buat DAFTAR ISI kalau bab-nya
+    # kebanyakan buat muat 1 halaman -- ini WAJIB dilakukan SEBELUM
+    # halaman isi tiap bab ditambahkan, biar nomor halamannya gak
+    # tabrakan/ke-timpa pas nanti kita balik ke halaman TOC buat diisi.
+    if toc_pages_needed > 1:
+        log(f"   ℹ️ Daftar isi butuh {toc_pages_needed} halaman ({num_chapters} bab).")
+    for _ in range(toc_pages_needed - 1):
+        pdf.add_page()
+    toc_page_numbers = list(range(toc_start_page, toc_start_page + toc_pages_needed))
 
     for ch in chapters_data:
         pdf.add_page()
@@ -1077,7 +2031,7 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None):
         pdf.set_font("DejaVu", size=11)
         for elem in ch['elements']:
             if elem['type'] == 'img':
-                img_data = fetch_image(elem['src'])
+                img_data = fetch_image(elem['src'], referer=elem.get('referer'))
                 if img_data:
                     try:
                         pdf.image(img_data, x=25, w=160)
@@ -1089,18 +2043,48 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None):
                 pdf.multi_cell(0, 6.5, clean_text, align='L')
                 pdf.ln(4)
 
-    pdf.page = toc_start_page
-    pdf.set_y(45)
-    pdf.set_font("DejaVu", size=11)
-    for i, ch in enumerate(chapters_data, start=1):
-        clean_ch_title = clean_unicode(ch['title'])
-        pdf.set_text_color(30, 80, 160)
-        toc_text = f"{i}. {clean_ch_title}"
-        toc_text = truncate_for_toc(pdf, toc_text, 138)
-        pdf.cell(145, 8, toc_text, link=ch['link_id'])
-        pdf.set_text_color(100, 100, 100)
-        pdf.cell(0, 8, f"Hal. {ch['page_number']}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT, link=ch['link_id'])
-        pdf.ln(1.5)
+    # Isi entri DAFTAR ISI ke halaman-halaman yang udah direservasi di
+    # atas. PENTING: gak boleh panggil pdf.add_page() di loop ini --
+    # semua halaman TOC-nya udah dibikin duluan (toc_page_numbers), jadi
+    # kita cuma pindah pointer `pdf.page` ke halaman yang udah ada, gak
+    # pernah bikin halaman baru pas posisi lagi "mundur". Kalau sampai
+    # add_page() kepanggil di sini pas pdf.page lagi di-rewind, FPDF
+    # bakal nyisipin/nimpa halaman berikutnya (bukan nambah di ujung
+    # dokumen) -- ini penyebab TOC dulu numpuk ketiban konten bab 1.
+    entry_idx = 0
+    for page_i, page_num in enumerate(toc_page_numbers):
+        pdf.page = page_num
+        if page_i == 0:
+            pdf.set_y(TOC_FIRST_PAGE_START_Y)
+            capacity = toc_capacity_first
+        else:
+            pdf.set_y(TOC_OTHER_PAGE_START_Y)
+            capacity = toc_capacity_other
+        pdf.set_font("DejaVu", size=11)
+
+        for _ in range(capacity):
+            if entry_idx >= num_chapters:
+                break
+            ch = chapters_data[entry_idx]
+            entry_idx += 1
+            clean_ch_title = clean_unicode(ch['title'])
+            pdf.set_text_color(30, 80, 160)
+            toc_text = f"{entry_idx}. {clean_ch_title}"
+            toc_text = truncate_for_toc(pdf, toc_text, 138)
+            pdf.cell(145, 8, toc_text, link=ch['link_id'])
+            pdf.set_text_color(100, 100, 100)
+            pdf.cell(0, 8, f"Hal. {ch['page_number']}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT, link=ch['link_id'])
+            pdf.ln(1.5)
+
+        if entry_idx >= num_chapters:
+            break
+
+    if entry_idx < num_chapters:
+        # Jaring pengaman: seharusnya gak kejadian lagi (margin -1 baris
+        # di atas), tapi kalau suatu saat masih kurang halaman TOC,
+        # mendingan ketauan lewat log daripada entrinya diem-diem hilang
+        # dari daftar isi.
+        log(f"   ⚠️ {num_chapters - entry_idx} entri daftar isi gak kebagian tempat.", "WARN")
 
     pdf.output(output_path)
     STATS["volume_ok"] += 1
@@ -1164,22 +2148,62 @@ if __name__ == "__main__":
             safe_story_title = sanitize_filename(story_title)
             log(f"📚 Novel: {story_title} — {len(volumes)} volume terdeteksi")
 
-            # Untuk AgungX & Madara, ambil cover novel sekali dari halaman
-            # index-nya (og:image), bukan dari gambar pertama tiap chapter.
+            # Untuk AgungX, Madara & WordPress.com, ambil cover novel sekali
+            # dari halaman index-nya (og:image), bukan dari gambar pertama
+            # tiap chapter. Khusus WordPress.com, tiap volume kadang punya
+            # gambar sampulnya sendiri di ToC (mis. CClaw) -> dipakai
+            # duluan kalau ketemu, baru fallback ke cover umum di atas.
+            # Khusus KDTNovels, og:image novel SAMA buat semua volume, jadi
+            # cover per-volume diambil dari gambar pertama halaman
+            # "Illustrations" volume masing-masing -> dipakai duluan,
+            # fallback ke og:image kalau volume itu gak punya halaman
+            # ilustrasi.
             cover_image_url = None
+            vol_covers_wpcom = {}
+            vol_covers_kdt = {}
             try:
                 res_cover = fetch_url(toc_url)
                 soup_cover = BeautifulSoup(res_cover.text, 'html.parser')
-                if is_agungx(toc_url) or is_madara(soup_cover):
+                if is_agungx(toc_url) or is_kdtnovels(toc_url) or is_madara(soup_cover) or is_wpcom(soup_cover):
                     cover_image_url = get_og_image(soup_cover)
+                elif is_luminare(toc_url) or is_yarnovel(soup_cover):
+                    # Ambil og:image dari chapter pertama kalau ada
+                    for vol_num in sorted(volumes):
+                        if volumes[vol_num]:
+                            first_url = volumes[vol_num][0][0]
+                            try:
+                                r_ch = fetch_url(first_url)
+                                s_ch = BeautifulSoup(r_ch.text, 'html.parser')
+                                og_ch = s_ch.find('meta', property='og:image')
+                                if og_ch and og_ch.get('content'):
+                                    cover_image_url = og_ch['content']
+                                    break
+                            except Exception:
+                                pass
+                        break
+                if is_wpcom(soup_cover):
+                    vol_covers_wpcom = get_wpcom_volume_covers(soup_cover)
             except Exception:
                 cover_image_url = None
 
+            if is_kdtnovels(toc_url):
+                vol_covers_kdt = get_kdtnovels_volume_covers(volumes)
+
             for vol_num in sorted(volumes):
                 urls = [u for u, _label in volumes[vol_num]]
+                url_labels = {u: label for u, label in volumes[vol_num]}
                 log(f"\n=== Memproses Volume {vol_num} ({len(urls)} bab) ===")
                 output_name = os.path.join(OUTPUT_DIR, f"{safe_story_title} Vol {vol_num}.pdf")
-                build_pdf_for_urls(urls, output_name, cover_image_url=cover_image_url)
+                if vol_num in vol_covers_kdt:
+                    vol_cover_url, vol_cover_referer = vol_covers_kdt[vol_num]
+                elif vol_num in vol_covers_wpcom:
+                    vol_cover_url, vol_cover_referer = vol_covers_wpcom[vol_num], toc_url
+                else:
+                    vol_cover_url, vol_cover_referer = cover_image_url, toc_url
+                build_pdf_for_urls(
+                    urls, output_name, cover_image_url=vol_cover_url,
+                    url_labels=url_labels, cover_referer=vol_cover_referer
+                )
 
             STATS["novel_ok"] += 1
             elapsed_novel = time.time() - t_start_novel
@@ -1223,15 +2247,20 @@ if __name__ == "__main__":
 
                 vol_cover = guess_cover_from_first_chapter(urls[0]) if urls else None
                 if vol_cover:
+                    vol_cover_referer = urls[0]
                     log("   📸 Cover volume ini diambil dari gambar pertama halaman awalnya.")
                 elif root_cover_image_url:
                     vol_cover = root_cover_image_url
+                    vol_cover_referer = root_url
                     log("   📸 Gak ada gambar di halaman awal, pakai cover novel dari halaman utama.")
                 else:
+                    vol_cover_referer = None
                     log("   ℹ️ Cover gak ketemu, PDF bakal dibuat tanpa halaman sampul.", "WARN")
 
                 output_name = os.path.join(OUTPUT_DIR, f"{safe_story_title} Vol {vol_num}.pdf")
-                build_pdf_for_urls(urls, output_name, cover_image_url=vol_cover)
+                build_pdf_for_urls(
+                    urls, output_name, cover_image_url=vol_cover, cover_referer=vol_cover_referer
+                )
 
             STATS["novel_ok"] += 1
             elapsed_novel = time.time() - t_start_novel

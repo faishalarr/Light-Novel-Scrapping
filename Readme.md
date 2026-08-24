@@ -10,9 +10,13 @@ dan dipecah per volume.
   gak perlu setting manual per domain:
   - Situs **Blogger** (mis. `*.blogspot.com`)
   - **AgungX Novel** (`agungxnovel.my.id`)
+  - Situs **KDTNovels** (`kdtnovels.net`)
+  - **Luminare Translations** (`luminaretranslations.com`) — tema
+    Yarnovel dengan content protection, konten diambil via WP REST API
   - Situs bertema **Madara/WordPress** (mis. `archtranslation.com`, dan
     situs lain apa pun yang pakai tema Madara — dideteksi lewat meta
     generator halamannya)
+  - Blog **WordPress.com** biasa (mis. `*.home.blog`, `*.wordpress.com`)
 - **Auto-split per volume** — dari satu link index/daftar isi novel,
   hasilnya otomatis kepecah jadi `Novel Vol 1.pdf`, `Novel Vol 2.pdf`, dst.
 - **Mode crawl manual (`StartUrls.txt`)** — buat situs Madara yang daftar
@@ -57,6 +61,7 @@ Cara paling gampang. Taruh link halaman **utama/index** novelnya di file
 https://kaoritranslation.blogspot.com/2025/12/zenmetsu-end-wo-shinimonogurui-de.html
 https://agungxnovel.my.id/novel/kimi-no-gachi
 https://archtranslation.com/manga/kuruna-megami-sama-to-issho-ni-sundara/
+https://luminaretranslations.com/series/the-story-of-how-i-went-from-being-the-least-popular-character-among-readers-to-the-most-popular-among-yami-heroines/
 ```
 
 Setiap link otomatis kepecah jadi PDF per volume ("Volume 1", "Volume 2",
