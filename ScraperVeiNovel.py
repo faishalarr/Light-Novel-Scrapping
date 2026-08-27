@@ -3,9 +3,11 @@ import os
 import re
 import html
 import json
+import math
 import time
 import datetime
 import requests
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
@@ -45,8 +47,11 @@ for _path in (FONT_REGULAR, FONT_BOLD):
 OUTPUT_DIR = "Result"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+LOGS_DIR = "Logs"
+os.makedirs(LOGS_DIR, exist_ok=True)
+
 _LOG_TS = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-LOG_FILE = os.path.join(OUTPUT_DIR, f"log_{_LOG_TS}.txt")
+LOG_FILE = os.path.join(LOGS_DIR, f"log_{_LOG_TS}.txt")
 
 STATS = {
     "series_ok": 0, "series_gagal": 0,
@@ -141,6 +146,16 @@ def parse_chapter_content(content_html):
     return elements
 
 
+def truncate_for_toc(pdf, text, max_width):
+    if pdf.get_string_width(text) <= max_width:
+        return text
+    ellipsis = "..."
+    while text and pdf.get_string_width(text + ellipsis) > max_width:
+        text = text[:-1]
+    text = text.rstrip()
+    return (text + ellipsis) if text else ellipsis
+
+
 def get_series_and_chapters(entry_url):
     """Dari SATU URL chapter mana saja, ambil info series + daftar
     LENGKAP semua chapter (grouped nanti per volume)."""
@@ -223,7 +238,7 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
         log("  ⚠️ Tidak ada bab yang berhasil di-scrape, PDF dilewati.", "WARN")
         return
 
-    # --- HALAMAN COVER (pakai cover_url dari data series) ---
+    # --- HALAMAN COVER ---
     cover_url = series.get('cover_url')
     if cover_url:
         img_data = fetch_image(cover_url)
@@ -231,7 +246,34 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
             pdf.add_page()
             pdf.image(img_data, x=0, y=0, w=210, h=297)
 
-    # --- DAFTAR ISI ---
+    # --- HALAMAN JUDUL (judul novel + source) ---
+    story_title = series.get('title', 'Novel')
+    pdf.add_page()
+    pdf.set_font("DejaVu", 'B', 20)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(60)
+    pdf.multi_cell(0, 12, clean_unicode(story_title), align='C')
+    pdf.ln(20)
+    pdf.set_font("DejaVu", '', 10)
+    pdf.set_text_color(140, 140, 140)
+    pdf.cell(0, 8, "Source: veinovel.com", align='C')
+
+    # --- DAFTAR ISI (multi-halaman) ---
+    TOC_ROW_HEIGHT = 9.5
+    TOC_PAGE_BOTTOM_Y = 297 - 20
+    TOC_FIRST_PAGE_START_Y = 45
+    TOC_OTHER_PAGE_START_Y = 20
+    toc_capacity_first = max(1, int((TOC_PAGE_BOTTOM_Y - TOC_FIRST_PAGE_START_Y) // TOC_ROW_HEIGHT) - 1)
+    toc_capacity_other = max(1, int((TOC_PAGE_BOTTOM_Y - TOC_OTHER_PAGE_START_Y) // TOC_ROW_HEIGHT) - 1)
+
+    num_chapters = len(chapters_data)
+    if num_chapters <= toc_capacity_first:
+        toc_pages_needed = 1
+    else:
+        toc_pages_needed = 1 + math.ceil(
+            (num_chapters - toc_capacity_first) / toc_capacity_other
+        )
+
     pdf.add_page()
     pdf.set_font("DejaVu", 'B', 18)
     pdf.set_text_color(0, 0, 0)
@@ -240,6 +282,10 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
     pdf.line(pdf.get_x(), pdf.get_y(), 190, pdf.get_y())
     pdf.ln(10)
     toc_start_page = pdf.page_no()
+
+    for _ in range(toc_pages_needed - 1):
+        pdf.add_page()
+    toc_page_numbers = list(range(toc_start_page, toc_start_page + toc_pages_needed))
 
     # --- ISI CHAPTER ---
     for ch in chapters_data:
@@ -275,18 +321,34 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
                 pdf.multi_cell(0, 6.5, clean_text, align='L')
                 pdf.ln(4)
 
-    # --- ISI LINK & NOMOR HALAMAN DI DAFTAR ISI ---
-    pdf.page = toc_start_page
-    pdf.set_y(45)
-    pdf.set_font("DejaVu", size=11)
-    for i, ch in enumerate(chapters_data, start=1):
-        clean_ch_title = clean_unicode(ch['title'])
-        pdf.set_text_color(30, 80, 160)
-        toc_text = f"{i}. {clean_ch_title}"
-        pdf.cell(145, 8, toc_text, link=ch['link_id'])
-        pdf.set_text_color(100, 100, 100)
-        pdf.cell(0, 8, f"Hal. {ch['page_number']}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT, link=ch['link_id'])
-        pdf.ln(1.5)
+    # --- ISI DAFTAR ISI ---
+    entry_idx = 0
+    for page_i, page_num in enumerate(toc_page_numbers):
+        pdf.page = page_num
+        if page_i == 0:
+            pdf.set_y(TOC_FIRST_PAGE_START_Y)
+            capacity = toc_capacity_first
+        else:
+            pdf.set_y(TOC_OTHER_PAGE_START_Y)
+            capacity = toc_capacity_other
+        pdf.set_font("DejaVu", size=11)
+
+        for _ in range(capacity):
+            if entry_idx >= num_chapters:
+                break
+            ch = chapters_data[entry_idx]
+            entry_idx += 1
+            clean_ch_title = clean_unicode(ch['title'])
+            pdf.set_text_color(30, 80, 160)
+            toc_text = f"{entry_idx}. {clean_ch_title}"
+            toc_text = truncate_for_toc(pdf, toc_text, 138)
+            pdf.cell(145, 8, toc_text, link=ch['link_id'])
+            pdf.set_text_color(100, 100, 100)
+            pdf.cell(0, 8, f"Hal. {ch['page_number']}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT, link=ch['link_id'])
+            pdf.ln(1.5)
+
+        if entry_idx >= num_chapters:
+            break
 
     pdf.output(output_path)
     STATS["volume_ok"] += 1

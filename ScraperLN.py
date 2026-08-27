@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import html
 import time
 import math
 import datetime
@@ -103,6 +104,12 @@ KDTNOVELS_DOMAINS = ('kdtnovels.net',)
 
 # Domain-domain Luminare Translations (Yarnovel theme)
 LUMINARE_DOMAINS = ('luminaretranslations.com',)
+
+# Domain-domain WorldNovel (Next.js + REST API)
+WORLDNOVEL_DOMAINS = ('worldnovel.my.id',)
+
+# Domain-domain StorySeedling (Laravel + Livewire + font obfuscation)
+STORYSEEDLING_DOMAINS = ('storyseedling.com',)
 
 # Batas aman auto-crawl "Next" buat mode Madara, biar gak infinite loop
 # kalau ada bug/redirect aneh.
@@ -267,6 +274,16 @@ def is_luminare(url_or_domain):
     return any(d in domain for d in LUMINARE_DOMAINS)
 
 
+def is_worldnovel(url_or_domain):
+    domain = urlparse(url_or_domain).netloc or url_or_domain
+    return any(d in domain for d in WORLDNOVEL_DOMAINS)
+
+
+def is_storyseedling(url_or_domain):
+    domain = urlparse(url_or_domain).netloc or url_or_domain
+    return any(d in domain for d in STORYSEEDLING_DOMAINS)
+
+
 def is_yarnovel(soup):
     body = soup.find('body')
     if body and body.get('class'):
@@ -292,11 +309,135 @@ def is_wpcom(soup):
     return False
 
 
+def is_generic_wp(soup):
+    """Deteksi WordPress self-hosted umum (bukan WP.com, bukan Madara).
+    Cek meta generator 'WordPress' tapi bukan 'WordPress.com' dan bukan Madara."""
+    gen = soup.find('meta', attrs={'name': 'generator'})
+    if gen and gen.get('content'):
+        content = gen['content'].lower()
+        if 'wordpress' in content and 'wordpress.com' not in content and 'madara' not in content:
+            return True
+    # Fallback: cek wp-content di link/script
+    if soup.find('link', href=re.compile(r'wp-content|wp-includes')):
+        return True
+    if soup.find('script', src=re.compile(r'wp-content|wp-includes')):
+        return True
+    return False
+
+
 def get_og_image(soup):
     og_image = soup.find('meta', attrs={'property': 'og:image'})
     if og_image and og_image.get('content'):
         return og_image['content']
     return None
+
+
+def is_generic_wp_index(soup):
+    """Cek apakah halaman ini adalah halaman index/TOC novel (bukan chapter).
+    Biasanya halaman index punya daftar link chapter dengan pola /chapter- atau /volume-"""
+    links = soup.find_all('a', href=re.compile(r'/chapter-|/volume-'))
+    return len(links) >= 3
+
+
+def get_volumes_from_toc_generic_wp(toc_url, soup):
+    """Parse halaman index novel WordPress self-hosted."""
+    # Ambil judul dari h1 atau og:title
+    story_title = "Novel"
+    h1 = soup.find('h1')
+    if h1:
+        story_title = h1.get_text(strip=True)
+    else:
+        og_title = soup.find('meta', attrs={'property': 'og:title'})
+        if og_title and og_title.get('content'):
+            story_title = og_title['content'].strip()
+
+    # Kumpulkan semua link chapter
+    domain = urlparse(toc_url).netloc
+    volumes = {}
+    current_vol = 1
+    seen = set()
+
+    # Cari link chapter dengan pola /chapter- atau /volume-
+    for a in soup.find_all('a', href=True):
+        href = fix_doubled_url(a.get('href'))
+        if not href or href in seen:
+            continue
+        link_domain = urlparse(href).netloc
+        if link_domain and link_domain != domain:
+            continue
+        # Pola chapter: /chapter-1-, /chapter-2-, /volume-1/chapter-1-
+        if not re.search(r'(/chapter-\d+|/volume-\d+/chapter-)', href):
+            continue
+        
+        label = a.get_text(strip=True)
+        if not label or len(label) < 3:
+            continue
+        
+        # Coba deteksi volume dari URL
+        vol_match = re.search(r'/volume-(\d+)/', href)
+        if vol_match:
+            current_vol = int(vol_match.group(1))
+        else:
+            # Coba deteksi dari label
+            vol_label = re.search(r'volume\s*(\d+)', label, re.IGNORECASE)
+            if vol_label:
+                current_vol = int(vol_label.group(1))
+        
+        seen.add(href)
+        volumes.setdefault(current_vol, []).append((href, label))
+
+    if not volumes:
+        raise RuntimeError("Tidak menemukan link chapter di halaman index WordPress ini.")
+
+    return story_title, volumes
+
+
+def scrape_chapter_generic_wp(url, soup):
+    """Scrape chapter dari WordPress self-hosted."""
+    # Cari konten di entry-content atau post-content atau main
+    container = None
+    for cls in ['entry-content', 'post-content', 'post-body', 'content', 'article-content']:
+        container = soup.find('div', class_=cls)
+        if container:
+            break
+    if not container:
+        # Fallback: cari di main atau article
+        container = soup.find('main') or soup.find('article')
+    if not container:
+        # Fallback: cari div dengan class mengandung 'post'
+        container = soup.find('div', class_=re.compile(r'post-\d+'))
+
+    chapter_title = "Chapter"
+    elements = []
+
+    if container:
+        # Ambil judul dari h1
+        h1 = soup.find('h1')
+        if h1:
+            chapter_title = h1.get_text(strip=True)
+
+        # Parse konten
+        for tag in container.find_all(['p', 'img']):
+            if tag.name == 'img':
+                src = tag.get('src')
+                if src:
+                    elements.append({'type': 'img', 'src': urljoin(url, src), 'referer': url})
+            else:
+                text = tag.get_text(strip=True)
+                if not text:
+                    continue
+                # Skip nav/junk
+                text_lower = text.lower()
+                if any(junk in text_lower for junk in junk_keywords):
+                    continue
+                if re.search(r'(previous chapter|next chapter|table of contents)', text_lower):
+                    continue
+                if len(text) < 3:
+                    continue
+                if not elements or elements[-1].get('value') != text:
+                    elements.append({'type': 'text', 'value': text})
+
+    return chapter_title, elements
 
 
 def normalize_img_src(src):
@@ -409,10 +550,12 @@ def get_volumes_from_toc_blogger(toc_url, soup):
     # ikut discan tag 'p'/'div' juga, dengan syarat teksnya PERSIS "Volume
     # N" doang (regex full-match), biar gak salah kena paragraf cerita yang
     # kebetulan nyebut kata "volume" di tengah kalimat.
+    # Catatan: regex pakai vol\w* (bukan "volume") biar typo umum kayak
+    # "Voloume", "Volme", "Voluem" dst tetap ke-detek.
     for tag in post_body.find_all(['b', 'strong', 'h2', 'h3', 'h4', 'p', 'div', 'a']):
         if tag.name != 'a':
             text = tag.get_text(strip=True)
-            vol_match = re.match(r'^volume\s*(\d+)\s*$', text, re.IGNORECASE)
+            vol_match = re.match(r'^vol\w*\s*(\d+)\s*$', text, re.IGNORECASE)
             if vol_match:
                 current_vol = int(vol_match.group(1))
                 volumes.setdefault(current_vol, [])
@@ -427,8 +570,8 @@ def get_volumes_from_toc_blogger(toc_url, soup):
         # Filter keamanannya pakai regex keyword label di bawah.
         label = tag.get_text(strip=True)
         if not re.search(
-            r'chapter|bab|prolog|prologue|epilog|epilogue|ilustrasi|illustrasi|'
-            r'afterword|extra|bonus|kata penutup|episode|eps\b',
+            r'chapter|bab|prolog|prologue|epilog|epilogue|ilustrasi|illustrasi|illustrations?|'
+            r'afterword|extra|bonus|kata penutup|episode|eps\b|part\s*\d',
             label, re.IGNORECASE
         ):
             continue
@@ -450,8 +593,8 @@ def get_volumes_from_toc_blogger(toc_url, soup):
             # dari regex keyword label di bawah + scope ke post_body.
             label = a.get_text(strip=True)
             if re.search(
-                r'chapter|bab|prolog|prologue|epilog|epilogue|ilustrasi|illustrasi|'
-                r'afterword|extra|bonus|kata penutup|episode|eps\b',
+                r'chapter|bab|prolog|prologue|epilog|epilogue|ilustrasi|illustrasi|illustrations?|'
+                r'afterword|extra|bonus|kata penutup|episode|eps\b|part\s*\d',
                 label, re.IGNORECASE
             ):
                 seen.add(href)
@@ -1210,8 +1353,448 @@ def scrape_chapter_luminare(url, soup):
 
 
 # ==========================================
-# MODE OTOMATIS (WORDPRESS.COM / BLOG BIASA): PARSING INDEX -> PER VOLUME
+# WORLDNOVEL.MY.ID (Next.js + REST API)
 # ==========================================
+# worldnovel.my.id adalah situs Next.js yang konten chapter-nya dimuat
+# lewat React Server Components (bukan HTML statis). Ada API internal
+# yang bisa dipanggil tanpa auth buat ambil SEMUA chapter sekaligus
+# beserta konten Markdown-nya:
+#   GET /api/novels/{internal_id}/chapters
+# Internal ID novel didapat dari data RSC yang ter-embed di halaman index.
+#
+# Cache buat nyimpen konten chapter dari API, biar scrape_chapter_worldnovel
+# gak perlu fetch ulang. Diisi sekali di get_volumes_from_toc_worldnovel,
+# dipakai di scrape_chapter_worldnovel.
+_WORLDNOVEL_CHAPTER_CACHE = {}
+
+
+def _worldnovel_extract_novel_internal_id(soup):
+    """Ekstrak internal ID novel dari data RSC yang ter-embed di halaman
+    index worldnovel.my.id. ID-nya ada di JSON payload dalam tag <script>
+    yang berisi 'self.__next_f.push' — cari field 'id' di objek novel
+    yang ada di data 'initialData' (novel object)."""
+    for script in soup.find_all('script'):
+        text = script.string or ''
+        if 'self.__next_f.push' not in text:
+            continue
+        # Cari pola novel:{\\\"id\\\":\\\"cms...\\\"} di dalam payload RSC
+        # (escaped JSON di dalam string JavaScript)
+        m = re.search(r'novel.*?\\"id\\":\\"(cms[a-z0-9]+)\\"', text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def get_volumes_from_toc_worldnovel(toc_url, soup):
+    """Parse halaman index worldnovel.my.id via REST API internal."""
+    novel_internal_id = _worldnovel_extract_novel_internal_id(soup)
+    if not novel_internal_id:
+        raise RuntimeError(
+            "Gagal menemukan internal ID novel di halaman index worldnovel.my.id."
+        )
+
+    log(f"   🔎 WorldNovel internal ID: {novel_internal_id}")
+
+    # Ambil judul dari og:title (lebih reliable untuk situs JS-rendered)
+    story_title = "Novel"
+    og_title = soup.find('meta', attrs={'property': 'og:title'})
+    if og_title and og_title.get('content'):
+        story_title = og_title['content'].strip()
+    if story_title == "Novel":
+        h1 = soup.find('h1')
+        if h1:
+            story_title = h1.get_text(strip=True)
+
+    # Fetch semua chapter via API internal
+    api_url = f"https://{urlparse(toc_url).netloc}/api/novels/{novel_internal_id}/chapters"
+    try:
+        res = fetch_url(api_url)
+        data = res.json()
+    except Exception as e:
+        raise RuntimeError(f"Gagal fetch API chapter WorldNovel: {e}")
+
+    chapters = data.get('chapters', [])
+    if not chapters:
+        raise RuntimeError("API WorldNovel mengembalikan 0 chapter.")
+
+    log(f"   📖 {len(chapters)} chapter ditemukan via REST API")
+
+    # Isi cache konten chapter & kelompokkan berdasarkan volume
+    volumes = {}
+    for ch in chapters:
+        vol_num = ch.get('volume') or 1
+        public_id = ch.get('publicId', '')
+        title = ch.get('title', 'Chapter')
+        chapter_number = ch.get('chapterNumber', '')
+        content = ch.get('content', '')
+        reading_order = ch.get('readingOrder', 0)
+
+        # Simpan di cache biar scrape_chapter_worldnovel bisa akses
+        _WORLDNOVEL_CHAPTER_CACHE[public_id] = {
+            'title': title,
+            'content': content,
+            'chapter_number': chapter_number,
+        }
+
+        # URL dummy — gak dipakai buat fetch, cuma identifier
+        dummy_url = f"worldnovel://{public_id}"
+        label = title
+        if chapter_number:
+            label = f"Chapter {chapter_number} - {title}"
+
+        volumes.setdefault(vol_num, []).append((reading_order, dummy_url, label))
+
+    # Urutkan tiap volume berdasarkan readingOrder
+    for vol_num in volumes:
+        volumes[vol_num].sort(key=lambda t: t[0])
+        volumes[vol_num] = [(url, label) for _order, url, label in volumes[vol_num]]
+
+    if not volumes:
+        raise RuntimeError("Tidak ada volume ditemukan dari API WorldNovel.")
+
+    return story_title, volumes
+
+
+def _parse_worldnovel_markdown(content, base_url=None):
+    """Konversi konten Markdown dari WorldNovel jadi list elemen
+    {'type': 'text', 'value': ...} / {'type': 'img', 'src': ..., 'referer': ...}"""
+    elements = []
+    if not content:
+        return elements
+
+    # Base URL buat convert relative image URLs
+    if not base_url:
+        base_url = "https://worldnovel.my.id"
+
+    # Split per baris, prosees paragraph & gambar
+    lines = content.split('\n')
+    text_buffer = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Markdown image: ![alt](url) — support both relative & absolute
+        img_match = re.match(r'!\[.*?\]\(([^)]+)\)', stripped)
+        if img_match:
+            # Flush text buffer dulu
+            if text_buffer:
+                combined = ' '.join(text_buffer)
+                combined = re.sub(r'\s+', ' ', combined).strip()
+                if combined:
+                    elements.append({'type': 'text', 'value': combined})
+                text_buffer = []
+            img_src = img_match.group(1)
+            if not img_src.startswith('http'):
+                img_src = urljoin(base_url, img_src)
+            elements.append({'type': 'img', 'src': img_src, 'referer': base_url})
+            continue
+
+        # Baris kosong = pemisah paragraph
+        if not stripped:
+            if text_buffer:
+                combined = ' '.join(text_buffer)
+                combined = re.sub(r'\s+', ' ', combined).strip()
+                if combined:
+                    elements.append({'type': 'text', 'value': combined})
+                text_buffer = []
+            continue
+
+        # Skip junk keywords
+        text_lower = stripped.lower()
+        if any(junk in text_lower for junk in junk_keywords):
+            continue
+
+        text_buffer.append(stripped)
+
+    # Flush sisa buffer
+    if text_buffer:
+        combined = ' '.join(text_buffer)
+        combined = re.sub(r'\s+', ' ', combined).strip()
+        if combined:
+            elements.append({'type': 'text', 'value': combined})
+
+    return elements
+
+
+def scrape_chapter_worldnovel(url, soup):
+    """Scrape chapter WorldNovel dari cache yang sudah diisi oleh
+    get_volumes_from_toc_worldnovel. URL yang masuk berformat
+    'worldnovel://<publicId>'."""
+    # Ekstrak public ID dari URL dummy
+    public_id = url.replace('worldnovel://', '')
+
+    cached = _WORLDNOVEL_CHAPTER_CACHE.get(public_id)
+    if not cached:
+        log(f"   ⚠️ Cache miss untuk chapter {public_id}, coba fetch dari API...", "WARN")
+        # Fallback: fetch satu chapter dari API
+        return "Chapter", []
+
+    title = cached['title']
+    chapter_number = cached.get('chapter_number', '')
+    content = cached['content']
+
+    final_title = title
+    if chapter_number:
+        final_title = f"Chapter {chapter_number} - {title}"
+
+    elements = _parse_worldnovel_markdown(content, base_url="https://worldnovel.my.id")
+    return final_title, elements
+
+
+# ==========================================
+# STORYSEEDLING.COM (Laravel + font obfuscation)
+# ==========================================
+# storyseedling.com pakai Laravel + Livewire + Alpine.js. Konten chapter
+# di-obfuscate server-side: setiap huruf Latin diganti dgn char dari range
+# Kangxi Radicals (U+2F42-U+2F75), lalu di-render pakai custom font
+# "Vagre" yang mapping balik ke glyph asli. POST ke /content dgn nonce
+# bisa langsung dpt HTML obfuscated-nya (gak perlu solve Turnstile).
+
+def _decode_storyseedling_text(text):
+    """Decode obfuscated text: Kangxi Radicals (U+2F42-U+2F75) -> A-Z + a-z.
+    Font Vagre mapping 52 Kangxi Radical chars ke 52 huruf Latin
+    (26 uppercase + 26 lowercase)."""
+    result = []
+    for ch in text:
+        code = ord(ch)
+        if 0x2F42 <= code <= 0x2F75:
+            p = code - 0x2F42
+            if p < 26:
+                result.append(chr(0x41 + p))  # A-Z
+            else:
+                result.append(chr(0x61 + p - 26))  # a-z
+        else:
+            result.append(ch)
+    return ''.join(result)
+
+
+def _storyseedling_extract_nonce(soup):
+    """Extract nonce dari halaman chapter storyseedling.com.
+    Nonce ada di atribut loadChapter('sitekey', 'nonce')."""
+    for script in soup.find_all('script'):
+        text = script.string or ''
+        m = re.search(r"loadChapter\('([^']+)',\s*'([^']+)'\)", text)
+        if m:
+            return m.group(2)
+    # Fallback: cari di seluruh HTML
+    m = re.search(r"loadChapter\('([^']+)',\s*'([^']+)'\)", str(soup))
+    if m:
+        return m.group(2)
+    return None
+
+
+def _storyseedling_fetch_chapters_via_playwright(toc_url):
+    """Ambil daftar chapter dari halaman series storyseedling.com pakai Playwright.
+    Karena chapter list di-load via JavaScript (Alpine.js), gak bisa pakai
+    requests biasa. Balikin list of dict {url, title, volume, chapter}."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RuntimeError(
+            "Playwright belum terinstall. Jalankan: "
+            "pip install playwright && python -m playwright install chromium"
+        )
+
+    parsed = urlparse(toc_url)
+    series_id_match = re.search(r'/series/(\d+)', parsed.path)
+    if not series_id_match:
+        raise RuntimeError(f"Gak bisa extract series ID dari URL: {toc_url}")
+    series_id = series_id_match.group(1)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(toc_url, wait_until='domcontentloaded', timeout=30000)
+        page.wait_for_timeout(5000)
+
+        raw_chapters = page.evaluate('''(seriesId) => {
+            const results = [];
+            const links = document.querySelectorAll('a[href*="/v"]');
+            for (const link of links) {
+                const href = link.getAttribute('href') || '';
+                const text = link.innerText.trim();
+                if (href.includes('/series/' + seriesId + '/v') && text.length > 5) {
+                    results.push({href, text});
+                }
+            }
+            return results;
+        }''', series_id)
+
+        browser.close()
+
+    # Parse chapters
+    chapters = []
+    seen_urls = set()
+    for raw in raw_chapters:
+        href = raw['href']
+        text = raw['text']
+
+        # Skip non-chapter links
+        if 'Read' == text.strip() or len(text) < 5:
+            continue
+        # Skip if not a chapter URL pattern
+        vol_match = re.search(r'/v(\d+)/([\d.]+)', href)
+        if not vol_match:
+            continue
+
+        full_url = urljoin(toc_url, href) if not href.startswith('http') else href
+        if full_url in seen_urls:
+            continue
+        seen_urls.add(full_url)
+
+        vol_num = int(vol_match.group(1))
+        # Clean title: remove "Vol. N Chapter N - " prefix, decode obfuscation
+        clean_title = re.sub(r'Vol\.\s*\d+\s+Chapter\s+[\d.]+\s*[-–]\s*', '', text)
+        clean_title = _decode_storyseedling_text(clean_title)
+        # Remove extra junk (dates, unicode artifacts)
+        clean_title = re.sub(r'\d+\s+years?\s+ago.*', '', clean_title).strip()
+        clean_title = re.sub(r'[^\x00-\x7F]+', '', clean_title).strip()
+
+        chapters.append({
+            'url': full_url,
+            'title': clean_title,
+            'volume': vol_num,
+        })
+
+    if not chapters:
+        raise RuntimeError("Gak ada chapter ditemukan via Playwright.")
+
+    return chapters
+
+
+def get_volumes_from_toc_storyseedling(toc_url, soup):
+    """Parse halaman series storyseedling.com."""
+    # Ambil judul dari og:title
+    story_title = "Novel"
+    og_title = soup.find('meta', attrs={'property': 'og:title'})
+    if og_title and og_title.get('content'):
+        story_title = html.unescape(og_title['content']).strip()
+    if story_title == "Novel":
+        h1 = soup.find('h1')
+        if h1:
+            story_title = h1.get_text(strip=True)
+
+    log(f"   🔎 StorySeedling: ambil chapter list via Playwright...")
+    chapters = _storyseedling_fetch_chapters_via_playwright(toc_url)
+    log(f"   📖 {len(chapters)} chapter ditemukan")
+
+    # Group by volume
+    volumes = {}
+    for ch in chapters:
+        vol_num = ch['volume']
+        label = f"Chapter {ch['title']}" if ch['title'] else "Chapter"
+        volumes.setdefault(vol_num, []).append((ch['url'], label))
+
+    if not volumes:
+        raise RuntimeError("Gak ada volume ditemukan dari StorySeedling.")
+
+    return story_title, volumes
+
+
+def scrape_chapter_storyseedling(url, soup):
+    """Scrape chapter storyseedling.com via POST /content + decode obfuscation."""
+    # Extract nonce dari halaman chapter
+    nonce = _storyseedling_extract_nonce(soup)
+    if not nonce:
+        log("   ⚠️ Gak bisa extract nonce, coba fallback.", "WARN")
+        return "Chapter", []
+
+    # POST ke /content endpoint - with retry (10 attempts)
+    content_url = f"{url.rstrip('/')}/content"
+    post_headers = {
+        'User-Agent': HEADERS['User-Agent'],
+        'X-Nonce': nonce,
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': url,
+    }
+    
+    content_html = None
+    for attempt in range(1, 11):
+        try:
+            res = requests.post(content_url, headers=post_headers, json={"nonce": ""}, timeout=30)
+        except Exception as e:
+            log(f"   ⚠️ POST /content gagal (percobaan {attempt}/10): {e}", "WARN")
+            if attempt < 10:
+                time.sleep(5 * attempt)  # 5s, 10s, 15s...
+            continue
+        
+        if res.status_code == 200:
+            content_html = res.text
+            break
+        elif res.status_code == 400:
+            log(f"   ⚠️ POST /content status 400 (percobaan {attempt}/10)", "WARN")
+            if attempt < 10:
+                time.sleep(8 * attempt)  # 8s, 16s, 24s...
+            continue
+        else:
+            log(f"   ⚠️ POST /content status {res.status_code} (percobaan {attempt}/10)", "WARN")
+            if attempt < 10:
+                time.sleep(5 * attempt)
+            continue
+
+    if not content_html or len(content_html) < 100:
+        log(f"   ⚠️ Gagal dapat konten chapter setelah 10x percobaan", "WARN")
+        return "Chapter", []
+
+    content_soup = BeautifulSoup(content_html, 'html.parser')
+
+    # Extract title dari halaman chapter
+    title = "Chapter"
+    h1 = soup.find('h1')
+    if h1:
+        title = _decode_storyseedling_text(h1.get_text(strip=True))
+        title = re.sub(r'^Vol\.\s*\d+\s+', '', title)
+        title = re.sub(r'^Chapter\s+[\d.]+\s*[-–]\s*', '', title)
+
+    # Parse elements - storyseedling uses <p> containing <span class="cls..."> with obfuscated text
+    # Strategy: iterate <p> tags, extract text from cls spans inside each, decode, clean
+    elements = []
+    junk_watermarks = [
+        'this content is owned by story seedling',
+        'if you are reading this on a site other than storyseedling',
+    ]
+
+    # Get images
+    for img in content_soup.find_all('img'):
+        src = img.get('src')
+        if src:
+            elements.append({'type': 'img', 'src': urljoin(url, src), 'referer': url})
+
+    # Process each <p> tag - each represents a paragraph
+    for p_tag in content_soup.find_all('p'):
+        # Get all cls spans inside this paragraph
+        para_texts = []
+        for span in p_tag.find_all('span', class_=re.compile(r'cls[a-f0-9]+')):
+            text = span.get_text(strip=True)
+            # Filter out noise spans (just cls references)
+            if not text or re.match(r'^cls[a-f0-9]+$', text):
+                continue
+            # Only keep spans with actual obfuscated text (non-cls chars)
+            if re.search(r'[^cls\d]', text):
+                para_texts.append(text)
+        
+        if not para_texts:
+            continue
+        
+        # Combine and decode
+        para_text = ' '.join(para_texts)
+        para_text = _decode_storyseedling_text(para_text)
+        para_text = re.sub(r'\s+', ' ', para_text).strip()
+        
+        # Skip very short or junk paragraphs
+        if len(para_text) < 10:
+            continue
+        para_lower = para_text.lower()
+        if any(junk in para_lower for junk in junk_watermarks):
+            continue
+        if any(junk in para_lower for junk in junk_keywords):
+            continue
+        
+        if not elements or elements[-1].get('value') != para_text:
+            elements.append({'type': 'text', 'value': para_text})
+
+    return title, elements
 # Blog WordPress.com biasa (mis. *.home.blog) -- ToC-nya cuma heading
 # "Volume N" diikuti link chapter POLOS (gak dibungkus bold kayak pola
 # Blogger). Link chapter dikenali dari pola PERMALINK TANGGAL bawaan
@@ -1309,12 +1892,21 @@ def get_volumes_from_toc(toc_url):
     elif is_luminare(toc_url) or is_yarnovel(soup):
         log("   🔎 Terdeteksi sebagai situs Luminare Translations (Yarnovel theme).")
         story_title, volumes = get_volumes_from_toc_luminare(toc_url, soup)
+    elif is_worldnovel(toc_url):
+        log("   🔎 Terdeteksi sebagai situs WorldNovel (Next.js + REST API).")
+        story_title, volumes = get_volumes_from_toc_worldnovel(toc_url, soup)
+    elif is_storyseedling(toc_url):
+        log("   🔎 Terdeteksi sebagai situs StorySeedling (Laravel + font obfuscation).")
+        story_title, volumes = get_volumes_from_toc_storyseedling(toc_url, soup)
     elif is_madara(soup):
         log("   🔎 Terdeteksi sebagai situs bertema Madara, crawl via Prev/Next...")
         story_title, volumes = get_volumes_from_toc_madara(toc_url, soup)
     elif is_wpcom(soup):
         log("   🔎 Terdeteksi sebagai blog WordPress.com biasa.")
         story_title, volumes = get_volumes_from_toc_wpcom(toc_url, soup)
+    elif is_generic_wp(soup) and is_generic_wp_index(soup):
+        log("   🔎 Terdeteksi sebagai WordPress self-hosted (index novel).")
+        story_title, volumes = get_volumes_from_toc_generic_wp(toc_url, soup)
     else:
         story_title, volumes = get_volumes_from_toc_blogger(toc_url, soup)
 
@@ -1352,6 +1944,13 @@ def scrape_chapter_blogger(url, soup, first_cover_key_holder, fallback_label=Non
 
     if post_body:
         for elem in post_body.find_all(['p', 'img', 'div', 'b', 'strong', 'h2', 'h3', 'span']):
+            # Skip wrapper <div> yang berisi anak <div>/<p> -- hanya proses
+            # "leaf" div (yang isinya teks langsung). Tanpa ini, find_all
+            # bakal ngambil outer div juga -> get_text() nyambungin semua
+            # paragraf jadi satu blok, lalu inner div juga ke-proses satu-
+            # satu -> teks ke-gabung/double & berantakan di PDF output.
+            if elem.name == 'div' and elem.find(['div', 'p']):
+                continue
             if elem.name == 'img':
                 src = elem.get('src')
                 if not src:
@@ -1864,7 +2463,7 @@ def truncate_for_toc(pdf, text, max_width):
 # ==========================================
 # SCRAPING + BUILD PDF UNTUK SATU BATCH LINK
 # ==========================================
-def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None, cover_referer=None):
+def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None, cover_referer=None, source_domain=None, story_title=None):
     if SKIP_EXISTING_PDF and os.path.exists(output_path):
         log(f"   ⏭️ Dilewati (PDF sudah ada): {output_path}")
         STATS["volume_skip"] += 1
@@ -1891,6 +2490,25 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
     for index, url in enumerate(urls, start=1):
         t_start_chapter = time.time()
         log(f"   [{index}/{len(urls)}] Scraping: {url}")
+
+        # WorldNovel: konten sudah ada di cache, skip HTTP fetch
+        if url.startswith('worldnovel://'):
+            final_title, elements = scrape_chapter_worldnovel(url, None)
+
+            link_id = pdf.add_link()
+            chapters_data.append({
+                'title': final_title,
+                'elements': elements,
+                'link_id': link_id,
+                'page_number': None
+            })
+
+            word_count = sum(len(e['value'].split()) for e in elements if e['type'] == 'text')
+            img_count = sum(1 for e in elements if e['type'] == 'img')
+            elapsed = time.time() - t_start_chapter
+            STATS["chapter_ok"] += 1
+            log(f"   ✅ \"{final_title}\" — {word_count} kata, {img_count} gambar ({elapsed:.1f}s)")
+            continue
 
         # Retry beberapa kali sebelum nyerah. Kadang server blog (Blogger
         # dkk) sempat ngasih status error sesaat (mis. 404/5xx) padahal
@@ -1935,8 +2553,14 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
             final_title, elements = scrape_chapter_kdtnovels(url, soup, fallback_label=fallback_label)
         elif is_luminare(url) or is_yarnovel(soup):
             final_title, elements = scrape_chapter_luminare(url, soup)
+        elif is_storyseedling(url):
+            final_title, elements = scrape_chapter_storyseedling(url, soup)
+        elif url.startswith('worldnovel://'):
+            final_title, elements = scrape_chapter_worldnovel(url, soup)
         elif is_madara(soup) or is_wpcom(soup):
             final_title, elements = scrape_chapter_madara(url, soup)
+        elif is_generic_wp(soup):
+            final_title, elements = scrape_chapter_generic_wp(url, soup)
         else:
             fallback_label = url_labels.get(url) if url_labels else None
             final_title, elements = scrape_chapter_blogger(url, soup, first_cover_key_holder, fallback_label=fallback_label)
@@ -1964,6 +2588,19 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
     if first_cover_img:
         pdf.add_page()
         pdf.image(first_cover_img, x=0, y=0, w=210, h=297)
+
+    if story_title or source_domain:
+        pdf.add_page()
+        pdf.set_font("DejaVu", 'B', 20)
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(60)
+        if story_title:
+            pdf.multi_cell(0, 12, clean_unicode(story_title), align='C')
+        if source_domain:
+            pdf.ln(20)
+            pdf.set_font("DejaVu", '', 10)
+            pdf.set_text_color(140, 140, 140)
+            pdf.cell(0, 8, f"Source: {source_domain}", align='C')
 
     # ---------- DAFTAR ISI (bisa lebih dari 1 halaman) ----------
     # Kapasitas per halaman dihitung dari tinggi baris entri yang FIXED
@@ -2164,7 +2801,7 @@ if __name__ == "__main__":
             try:
                 res_cover = fetch_url(toc_url)
                 soup_cover = BeautifulSoup(res_cover.text, 'html.parser')
-                if is_agungx(toc_url) or is_kdtnovels(toc_url) or is_madara(soup_cover) or is_wpcom(soup_cover):
+                if is_agungx(toc_url) or is_kdtnovels(toc_url) or is_madara(soup_cover) or is_wpcom(soup_cover) or is_worldnovel(toc_url) or is_storyseedling(toc_url):
                     cover_image_url = get_og_image(soup_cover)
                 elif is_luminare(toc_url) or is_yarnovel(soup_cover):
                     # Ambil og:image dari chapter pertama kalau ada
@@ -2202,7 +2839,8 @@ if __name__ == "__main__":
                     vol_cover_url, vol_cover_referer = cover_image_url, toc_url
                 build_pdf_for_urls(
                     urls, output_name, cover_image_url=vol_cover_url,
-                    url_labels=url_labels, cover_referer=vol_cover_referer
+                    url_labels=url_labels, cover_referer=vol_cover_referer,
+                    source_domain=urlparse(toc_url).netloc, story_title=story_title
                 )
 
             STATS["novel_ok"] += 1
@@ -2259,7 +2897,8 @@ if __name__ == "__main__":
 
                 output_name = os.path.join(OUTPUT_DIR, f"{safe_story_title} Vol {vol_num}.pdf")
                 build_pdf_for_urls(
-                    urls, output_name, cover_image_url=vol_cover, cover_referer=vol_cover_referer
+                    urls, output_name, cover_image_url=vol_cover, cover_referer=vol_cover_referer,
+                    source_domain=urlparse(start_url).netloc, story_title=story_title
                 )
 
             STATS["novel_ok"] += 1
@@ -2280,7 +2919,7 @@ if __name__ == "__main__":
         safe_title = sanitize_filename(story_title)
         output_name = os.path.join(OUTPUT_DIR, f"{safe_title}.pdf")
         log(f"\n=== Memproses {len(urls)} bab (mode manual urls.txt) ===")
-        build_pdf_for_urls(urls, output_name)
+        build_pdf_for_urls(urls, output_name, source_domain=urlparse(urls[0]).netloc, story_title=story_title)
         STATS["novel_ok"] += 1
 
     print_summary(t_start_total)
