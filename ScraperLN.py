@@ -90,7 +90,61 @@ junk_keywords = [
     # jadi tag terpisah di HTML, jadi teksnya cuma "Penerjemah" doang
     # tanpa ": Nama" di belakangnya.
     'penerjemah', 'proffreader', 'proofreader', 'editor:', 'translator',
-    'dengarkan', 'menit baca'
+    'dengarkan', 'menit baca',
+    # Junk spesifik Blogger (Lintas Ninja Translation & sejenisnya) yang
+    # nempel di akhir hampir tiap bab: TL Note Admin, blok "Baca juga:",
+    # label "Tags:", tombol nav Blogger ("Lebih lama"/"Lebih baru" yg
+    # ke-render jadi "Sebelumnya"/"Selanjutnya"), dll. Full-match (regex
+    # anchor) di-handle di bawah oleh _JUNK_BLOGGER_PATTERNS, sisanya
+    # pakai substring match di sini.
+    'whatsapp.com/channel', 'tl note:', 'tl note ',
+    'baca juga:', 'baca juga di', 'silakan cek',
+    'sebelumnya', 'selanjutnya', 'lebih lama', 'lebih baru',
+    'postingan komentar', 'berkomentar di kolom',
+    'follow channel whatsapp',
+    # Baris "• Jaku-Chara Tomozaki-kun ..." & "Facebook Twitter" di blok
+    # "Baca juga:" + share button Blogger sering nongol sebagai baris
+    # sendiri dengan karakter aneh (\xa0, &nbsp;) di depan, jadi regex
+    # anchor ^ di _JUNK_BLOGGER_PATTERNS gak selalu match. Substring di
+    # sini sebagai jaring pengaman tambahan.
+    'jaku-chara tomozaki-kun', 'facebook twitter',
+    'support kami:', 'dukung kami:',
+]
+
+# Pola regex full-match buat blok junk Blogger yang sering multi-baris
+# (TL Note Admin, blok "Tags:", dsb.). Dipakai setelah substring check
+# di junk_keywords biar blok TL Note sepanjang berapa baris pun ke-skip
+# utuh, bukan kepotong setengah.
+_JUNK_BLOGGER_PATTERNS = [
+    re.compile(r'^tl\s*note\s*:.*', re.IGNORECASE | re.DOTALL),
+    re.compile(r'^\s*tags?\s*:?\s*$', re.IGNORECASE),
+    re.compile(r'^\s*tags?\s*:\s*[\w\s,]+$', re.IGNORECASE),
+    re.compile(r'^\s*facebook\s+twitter\s*$', re.IGNORECASE),
+    re.compile(r'^\s*facebook\s*$', re.IGNORECASE),
+    re.compile(r'^\s*twitter\s*$', re.IGNORECASE),
+    re.compile(r'^\s*[\u2022\-\*\xa0\s]*jaku-chara[^\n]*$', re.IGNORECASE),
+    re.compile(r'^\s*whatsapp\s*$', re.IGNORECASE),
+    re.compile(r'^\s*pinterest\s*$', re.IGNORECASE),
+    re.compile(r'^\s*reddit\s*$', re.IGNORECASE),
+    re.compile(r'^\s*linkedin\s*$', re.IGNORECASE),
+    re.compile(r'^\s*tumblr\s*$', re.IGNORECASE),
+    re.compile(r'^\s*telegram\s*$', re.IGNORECASE),
+    re.compile(r'^\s*email\s*$', re.IGNORECASE),
+    re.compile(r'^\s*tampilkan\s+selengkapnya\s*$', re.IGNORECASE),
+    re.compile(r'^\s*show\s+more\s*$', re.IGNORECASE),
+    re.compile(r'^\s*share\s*$', re.IGNORECASE),
+    re.compile(r'^\s*related\s+posts?\s*$', re.IGNORECASE),
+    re.compile(r'^\s*posting\s+komentar\s*$', re.IGNORECASE),
+    re.compile(r'^\s*komentar\s*$', re.IGNORECASE),
+    re.compile(r'^\s*←?\s*sebelumnya\s+daftar\s+isi\s+selanjutnya\s*→?\s*$', re.IGNORECASE),
+    re.compile(r'^\s*←\s*sebelumnya\s*$', re.IGNORECASE),
+    re.compile(r'^\s*selanjutnya\s*→\s*$', re.IGNORECASE),
+    re.compile(r'^\s*baca\s+juga\s*:.*', re.IGNORECASE | re.DOTALL),
+    re.compile(r'^\s*baca\s+juga\s+dalam\s+bahasa\s+lain\s*:.*', re.IGNORECASE | re.DOTALL),
+    re.compile(r'^\s*admin\s+kembali.*', re.IGNORECASE | re.DOTALL),
+    re.compile(r'^\s*jangan\s+lupa\s+berkomentar.*', re.IGNORECASE | re.DOTALL),
+    re.compile(r'^\s*nantikan\s+terus\s+terjemahan.*', re.IGNORECASE | re.DOTALL),
+    re.compile(r'^\s*selamat\s+(pagi|siang|sore|malam|berlibur).*', re.IGNORECASE),
 ]
 
 # Domain-domain yang dianggap "agungxnovel-style" (bukan Blogger).
@@ -122,6 +176,9 @@ FONT_DIR = "fonts"
 FONT_REGULAR = os.path.join(FONT_DIR, "DejaVuSans.ttf")
 FONT_BOLD = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
 
+# Font CJK OPSIONAL. Definisi + subset generator udah di blok atas
+# (baris ~125). Di sini cuma validasi font latin wajib ada + trigger
+# pembuatan subset kalau font CJK tersedia.
 for _path in (FONT_REGULAR, FONT_BOLD):
     if not os.path.exists(_path):
         raise FileNotFoundError(
@@ -184,10 +241,33 @@ def clean_unicode(text):
     replacements = {
         '\u00a0': ' ',
         '\u200b': '',
+        # CJK punctuation -> ASCII bracket. Glyph 『 』 【 】 「 』 gak
+        # ada di DejaVu Sans default, dan fpdf2 di-skip senyap kalau
+        # font-nya gak punya glyph -> karakter hilang dari PDF. Replace
+        # ke [ ] yang glyph-nya ADA di DejaVu Sans, jadi konteks
+        # "tanda kutip pesan teks" masih kebaca buat novel Indo.
     }
+    replacements.update(_CJK_PUNCT_TO_ASCII)
     for orig, repl in replacements.items():
         text = text.replace(orig, repl)
     return text
+
+
+# Karakter CJK punctuation yang sering dipake di LN terjemahan Kaori
+# sebagai tanda kutip pesan teks (chat/SMS): 『...』 (white corner
+# brackets) dan 「...」 (raised corner brackets). Glyph karakter-karakter
+# ini TIDAK ada di font DejaVu Sans (default scraper), jadi kalau
+# diterusin mentah ke fpdf2 bakal di-skip senyap dan gak nongol di PDF.
+# Ganti ke ASCII bracket [ ] (glyph-nya ADA di DejaVu Sans) -- masih
+# kebaca sebagai "tanda kutip pesan" dan visual konsisten buat novel
+# Indo yang gak pake tipografi Jepang. Penugasan lain untuk karakter
+# punctuation CJK ada di dalam clean_unicode() di bawah.
+_CJK_PUNCT_TO_ASCII = {
+    '\u300e': '[',  # 『 -> [
+    '\u300f': ']',  # 』 -> ]
+    '\u300c': '[',  # 「 -> [
+    '\u300d': ']',  # 」 -> ]
+}
 
 
 def sanitize_filename(name):
@@ -555,7 +635,7 @@ def get_volumes_from_toc_blogger(toc_url, soup):
     for tag in post_body.find_all(['b', 'strong', 'h2', 'h3', 'h4', 'p', 'div', 'a']):
         if tag.name != 'a':
             text = tag.get_text(strip=True)
-            vol_match = re.match(r'^vol\w*\s*(\d+)\s*$', text, re.IGNORECASE)
+            vol_match = re.match(r'^(?:vol\w*|jilid)\s*(\d+)\s*$', text, re.IGNORECASE)
             if vol_match:
                 current_vol = int(vol_match.group(1))
                 volumes.setdefault(current_vol, [])
@@ -1022,6 +1102,8 @@ def get_volumes_from_toc_kdtnovels(toc_url, soup):
         href = fix_doubled_url(a.get('href'))
         if not href:
             continue
+        if not href.startswith(('http://', 'https://')):
+            href = urljoin(toc_url, href)
         # Pakai separator spasi: potongan "Vol. X Ch. Y", judul, & tanggal
         # ada di elemen/text-node terpisah tanpa spasi di HTML aslinya,
         # jadi tanpa separator ini bakal nempel jadi satu kata (mis.
@@ -1031,22 +1113,29 @@ def get_volumes_from_toc_kdtnovels(toc_url, soup):
         if not label:
             continue
         m = _KDT_VOLCHAP_RE.search(label)
-        if not m:
+        if m:
+            vol_num = int(m.group(1))
+            chap_str = m.group(2)
+        else:
+            vol_from_url = re.search(r'vol[\.\-_ ]?(\d+)', href, re.IGNORECASE)
+            chap_from_label = re.search(r'Ch\.?\s*([\d.]+)', label, re.IGNORECASE)
+            if not (vol_from_url and chap_from_label):
+                continue
+            vol_num = int(vol_from_url.group(1))
+            chap_str = chap_from_label.group(1)
+        try:
+            chap_num = float(chap_str)
+        except ValueError:
             continue
         link_domain = urlparse(href).netloc
         if link_domain and link_domain != domain:
             continue
-        vol_num = int(m.group(1))
-        try:
-            chap_num = float(m.group(2))
-        except ValueError:
-            continue
 
-        # Bersihin label jadi cuma judul chapter-nya doang: buang prefix
-        # "Vol. X Ch. Y" di depan & tanggal rilis di belakang. Dipakai
-        # sebagai fallback judul kalau parsing judul dari ISI halaman
-        # chapter-nya gagal nemu apa-apa.
-        clean_label = label[m.end():].strip()
+        if m:
+            clean_label = label[m.end():].strip()
+        else:
+            chap_label_match = re.search(r'Ch\.?\s*[\d.]+\s*[:\-]?\s*(.*)', label, re.IGNORECASE)
+            clean_label = chap_label_match.group(1).strip() if chap_label_match else label
         clean_label = _KDT_DATE_SUFFIX_RE.sub('', clean_label).strip()
         if not clean_label:
             clean_label = label
@@ -1978,6 +2067,12 @@ def scrape_chapter_blogger(url, soup, first_cover_key_holder, fallback_label=Non
                 is_junk = any(junk in text_lower for junk in junk_keywords)
                 if is_junk:
                     continue
+                # Pola regex full-match buat blok junk Blogger multi-baris
+                # (TL Note Admin, "Tags:", baris share button individual,
+                # dsb.) -- substring check di atas gak nutup ini karena
+                # teksnya bisa panjang & kepecah per baris di HTML.
+                if any(pat.search(text) for pat in _JUNK_BLOGGER_PATTERNS):
+                    continue
                 # Guard panjang teks: judul chapter harusnya pendek (mis.
                 # "Epilog" atau "Chapter 5 - Judulnya"). Kalau paragraf
                 # yang KEBETULAN diawali kata "epilog"/"chapter"/dst itu
@@ -2712,6 +2807,7 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
             pdf.set_text_color(100, 100, 100)
             pdf.cell(0, 8, f"Hal. {ch['page_number']}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT, link=ch['link_id'])
             pdf.ln(1.5)
+            pdf.set_font("DejaVu", size=11)
 
         if entry_idx >= num_chapters:
             break
