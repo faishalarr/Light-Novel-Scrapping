@@ -2340,8 +2340,15 @@ def _flatten_content_container(parent):
         if name in ('script', 'style', 'ins', 'button', 'iframe'):
             continue
         if name == 'div':
-            div_text = child.get_text(strip=True)
-            if 'privasi' in div_text.lower() or 'iklan' in div_text.lower() or 'archnovel' in div_text.lower():
+            # Skip wrapper iklan AdSense (atau disclaimer privasi AdSense
+            # yang di-inject situs sebagai banner), BUKAN paragraf cerita
+            # yang ngomongin "masalah privasi" karakter. Dulu filter di
+            # sini pakai substring "privasi/iklan/archnovel" tapi itu
+            # ke-trigger sama dialog biasa (mis. "...ada masalah privasi
+            # Kurumi-san..."), jadi 1 paragraf nge-skip jadi SELURUH
+            # <div class="text-left"> yg isi 500+ paragraf ke-drop.
+            cls = child.get('class') or []
+            if any('ad-slot' in c.lower() or 'ad-ins' in c.lower() or 'archnovel' in c.lower() for c in cls):
                 continue
         # Kalau masih ada blok/tag penting di dalamnya, turun dulu
         if child.find(['p', 'li', 'div', 'img', 'h2', 'h3', 'h4', 'h5']):
@@ -2366,9 +2373,14 @@ def scrape_chapter_madara(url, soup):
         targets = _flatten_content_container(container)
         for elem in targets:
             if elem.name == 'div':
-                # Periksa apakah div ini berisi teks asli atau iklan/disclaimer
-                div_text = elem.get_text(strip=True)
-                if 'privasi' in div_text.lower() or 'iklan' in div_text.lower() or 'archnovel' in div_text.lower():
+                # Skip wrapper iklan/disclaimer (AdSense slot dll.).
+                # Penting: filter pakai CLASS AdSense (`ad-slot`/`ad-ins`),
+                # BUKAN substring "privasi/iklan" -- substring ke-trigger
+                # sama dialog cerita yang nyebut kata "privasi" (mis.
+                # "...ada masalah privasi Kurumi-san...") dan skip 1 div =
+                # nge-drop ratusan paragraf sekaligus.
+                cls = elem.get('class') or []
+                if any('ad-slot' in c.lower() or 'ad-ins' in c.lower() or 'archnovel' in c.lower() for c in cls):
                     continue
             if elem.name in ('h2', 'h3', 'h4', 'h5'):
                 heading_text = elem.get_text(strip=True)
