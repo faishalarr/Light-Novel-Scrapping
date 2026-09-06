@@ -635,7 +635,7 @@ def get_volumes_from_toc_blogger(toc_url, soup):
     for tag in post_body.find_all(['b', 'strong', 'h2', 'h3', 'h4', 'p', 'div', 'a']):
         if tag.name != 'a':
             text = tag.get_text(strip=True)
-            vol_match = re.match(r'^(?:vol\w*|jilid)\s*(\d+)\s*$', text, re.IGNORECASE)
+            vol_match = re.match(r'^(?:vol\w*|jilid)\s*(\d+)\s*(?:\s+END)?$', text, re.IGNORECASE)
             if vol_match:
                 current_vol = int(vol_match.group(1))
                 volumes.setdefault(current_vol, [])
