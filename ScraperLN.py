@@ -2065,11 +2065,12 @@ def get_volumes_from_toc_blogger_label(toc_url):
     # Chapter 2, ..., Prologue, Afterword). Entries yang gak ke-parse
     # ditaruh di akhir.
     def sort_key(entry):
-        _, lbl = entry
-        # Cari pola "Chapter N" atau "Bab N"
-        m = re.search(r'chapter\s*(\d+)', lbl, re.IGNORECASE) or re.search(r'bab\s*(\d+)', lbl, re.IGNORECASE)
+        lbl, _ = entry  # entry = (label, href); lbl = element 0
+        # Cari pola "Chapter N" atau "Bab N" (N bisa desimal: 4.5, 8.5, dst)
+        m = re.search(r'chapter\s*(\d+(?:\.\d+)?)', lbl, re.IGNORECASE) or re.search(r'bab\s*(\d+(?:\.\d+)?)', lbl, re.IGNORECASE)
         if m:
-            return (1, int(m.group(1)), lbl)
+            # Pakai float biar 4.5 < 5, bukan integer (4.5 -> 4 salah)
+            return (1, float(m.group(1)), lbl)
         if re.search(r'prolog', lbl, re.IGNORECASE):
             return (0, 0, lbl)
         if re.search(r'illustrasi|illustration', lbl, re.IGNORECASE):
@@ -2170,6 +2171,16 @@ def scrape_chapter_blogger(url, soup, first_cover_key_holder, fallback_label=Non
             # satu -> teks ke-gabung/double & berantakan di PDF output.
             if elem.name == 'div' and elem.find(['div', 'p']):
                 continue
+            # Skip <span> yang di dalam <p> -- p-nya sudah di-scan sendiri,
+            # jadi span gak perlu diproses ulang (biar gak double).
+            if elem.name == 'span' and elem.find_parent('p'):
+                continue
+            # Skip <span> Google Docs wrapper (id="docs-internal-guid-...")
+            # yang ngebungkus BANYAK <p> di dalamnya. Tanpa ini, satu
+            # <span> gede di proses sebagai leaf -> get_text() nyambungin
+            # SELURUH chapter jadi 1 block berantakan.
+            if elem.name == 'span' and elem.find(['p', 'div']):
+                continue
             if elem.name == 'img':
                 src = elem.get('src')
                 if not src:
@@ -2190,6 +2201,12 @@ def scrape_chapter_blogger(url, soup, first_cover_key_holder, fallback_label=Non
                 # separator ini, get_text() nyambungin baris-baris itu
                 # TANPA spasi (mis. "hari libur.Saat ini, aku...").
                 text = elem.get_text(' ', strip=True)
+                # Strip zero-width space (& zero-width joiner, BOM, dll.)
+                # yang sering muncul di awal paragraf Blogger dari paste
+                # Word/Google Docs -- tanpa strip ini, get_text() masih
+                # nge-keep karakter tak terlihat di akhir/awal text & bisa
+                # bikin PDF wrap atau output berantakan.
+                text = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', text)
                 text = re.sub(r'\s+', ' ', text).strip()
                 if not text:
                     continue
