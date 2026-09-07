@@ -1960,6 +1960,131 @@ def get_wpcom_volume_covers(soup):
 # ==========================================
 # DISPATCHER: MODE OTOMATIS
 # ==========================================
+def _is_blogger_label_page(toc_url):
+    """True kalau URL-nya halaman label Blogger (mis.
+    ...blogspot.com/search/label/<nama>...). Halaman ini bukan ToC
+    novel, tapi listing semua post dengan label tertentu -- di-crawl
+    via pagination 'Load more posts' (link dengan parameter start=N)."""
+    parsed = urlparse(toc_url)
+    if not parsed.netloc.endswith('blogspot.com'):
+        return False
+    return '/search/label/' in parsed.path
+
+
+def get_volumes_from_toc_blogger_label(toc_url):
+    """Crawl halaman label Blogger: kumpulkan SEMUA link post yang
+    muncul di semua halaman pagination (link 'Load more posts' / 'Older'
+    yang bawa parameter start=N). Balikin (story_title, {1: [(href, label), ...]})
+    -- semuanya dilump jadi 1 volume karena Blogger label page gak punya
+    heading 'Volume N'."""
+    log("   🔎 Halaman label Blogger terdeteksi, crawl pagination...")
+    parsed = urlparse(toc_url)
+    # Bersihin query string biar crawl dari page 1 (start=1 = default)
+    base = urljoin(f"{parsed.scheme}://{parsed.netloc}", parsed.path)
+
+    seen = set()
+    all_entries = []  # [(label, href)]
+    next_url = base
+    page = 0
+    MAX_PAGES = 50  # safety cap
+
+    while next_url and page < MAX_PAGES:
+        page += 1
+        log(f"   📄 Label page {page}: {next_url[:90]}...")
+        res = fetch_url(next_url)
+        if res.status_code != 200:
+            log(f"   ⚠️ Gagal fetch label page {page} (status {res.status_code}), stop.", "WARN")
+            break
+        soup = BeautifulSoup(res.text, 'html.parser')
+
+        # Setiap post entry di Blogger label page punya <h2> dengan <a>
+        # nunjuk ke URL post individual.
+        new_on_page = 0
+        for h2 in soup.find_all('h2'):
+            a = h2.find('a')
+            if not a or not a.get('href'):
+                continue
+            href = fix_doubled_url(a['href'])
+            if not href or href in seen:
+                continue
+            # Filter link post dummy "Older posts"/"Home" dll
+            if any(skip in href for skip in ('/search/label', '/search?', '#', 'javascript:')):
+                continue
+            label = a.get_text(strip=True)
+            if not label:
+                continue
+            seen.add(href)
+            all_entries.append((label, href))
+            new_on_page += 1
+
+        log(f"      → {new_on_page} post baru (total {len(all_entries)})")
+
+        if new_on_page == 0:
+            # Halaman kosong / 'No results found' -> stop
+            break
+
+        # Cari link 'Load more posts' / 'Older posts' (Blogger pake
+        # parameter start= di URL-nya). Kadang ada beberapa link dengan
+        # start=, pilih yang start= terbesar (paling baru / lanjutannya).
+        candidates = []
+        for a in soup.find_all('a'):
+            href = a.get('href') or ''
+            if 'start=' not in href:
+                continue
+            text = a.get_text(strip=True).lower()
+            if any(kw in text for kw in ('load more', 'older', 'next', '›', '»')) or 'start=' in href:
+                candidates.append(href)
+        if not candidates:
+            break
+        # Ambil yang start= terbesar (pagination lanjutan)
+        def start_of(url):
+            m = re.search(r'start=(\d+)', url)
+            return int(m.group(1)) if m else 0
+        next_url = max(candidates, key=start_of)
+        if start_of(next_url) == start_of(candidates[0]) and len(candidates) > 1 and start_of(candidates[0]) == 0:
+            # Safety: kalau semua start=0, jangan loop
+            break
+
+    if not all_entries:
+        raise RuntimeError("Halaman label Blogger ini kosong / tidak ada post.")
+
+    # Title dari <title> page atau h1 (Blogger label page biasanya cuma
+    # punya <title>). Buang suffix ' - Kaori TL' dll.
+    title = ''
+    if soup and soup.title and soup.title.string:
+        title = soup.title.string.strip()
+    else:
+        og = soup.find('meta', attrs={'property': 'og:title'}) if soup else None
+        if og and og.get('content'):
+            title = og['content']
+    if not title:
+        title = "Novel"
+    title = re.split(r'\s*[-–—]\s*', title, maxsplit=1)[0].strip()
+
+    # Sort entries by chapter number yang ke-parse dari label (Chapter 1,
+    # Chapter 2, ..., Prologue, Afterword). Entries yang gak ke-parse
+    # ditaruh di akhir.
+    def sort_key(entry):
+        _, lbl = entry
+        # Cari pola "Chapter N" atau "Bab N"
+        m = re.search(r'chapter\s*(\d+)', lbl, re.IGNORECASE) or re.search(r'bab\s*(\d+)', lbl, re.IGNORECASE)
+        if m:
+            return (1, int(m.group(1)), lbl)
+        if re.search(r'prolog', lbl, re.IGNORECASE):
+            return (0, 0, lbl)
+        if re.search(r'illustrasi|illustration', lbl, re.IGNORECASE):
+            return (-1, 0, lbl)
+        if re.search(r'epilog', lbl, re.IGNORECASE):
+            return (2, 0, lbl)
+        if re.search(r'afterword', lbl, re.IGNORECASE):
+            return (3, 0, lbl)
+        return (4, 0, lbl)
+
+    all_entries.sort(key=sort_key)
+
+    return title, {1: [(href, label) for label, href in all_entries]}
+
+
 def get_volumes_from_toc(toc_url):
     log(f"📖 Membaca halaman index: {toc_url}")
     try:
@@ -1987,6 +2112,11 @@ def get_volumes_from_toc(toc_url):
     elif is_storyseedling(toc_url):
         log("   🔎 Terdeteksi sebagai situs StorySeedling (Laravel + font obfuscation).")
         story_title, volumes = get_volumes_from_toc_storyseedling(toc_url, soup)
+    elif _is_blogger_label_page(toc_url):
+        # Halaman label Blogger (gak ada ToC): crawl pagination 'Load more'.
+        # soup di atas gak dipake di sini (langsung re-fetch per page di
+        # fungsi label-crawl).
+        story_title, volumes = get_volumes_from_toc_blogger_label(toc_url)
     elif is_madara(soup):
         log("   🔎 Terdeteksi sebagai situs bertema Madara, crawl via Prev/Next...")
         story_title, volumes = get_volumes_from_toc_madara(toc_url, soup)
