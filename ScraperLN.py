@@ -77,6 +77,13 @@ STARTURL_FILE = "StartUrls.txt"
 # False -> selalu scraping ulang & timpa PDF yang sudah ada.
 SKIP_EXISTING_PDF = True
 
+# ==========================================
+# PDF DARK THEME
+# ==========================================
+# Format PDF bergaya gelap (background hitam, teks putih) dengan
+# header page number & footer nama platform + judul chapter.
+SITE_NAME = "LalaNovel"
+
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
 }
@@ -224,12 +231,30 @@ def log(msg, level="INFO"):
 
 
 class NovelPDF(FPDF):
+    """FPDF subclass dengan dark theme & header/footer otomatis."""
+
+    _chapter_title = ""
+    _cover_done = False
+
+    def header(self):
+        if self._cover_done and self.page_no() > 1:
+            self.set_y(5)
+            self.set_font("DejaVu", "", 8)
+            self.set_text_color(180, 180, 180)
+            self.cell(0, 5, f"Page | {self.page_no()}", align='R')
+            self.set_text_color(255, 255, 255)
+            self.set_y(self.l_margin)
+
     def footer(self):
-        if self.page_no() > 1:
-            self.set_y(-15)
-            self.set_font("DejaVu", '', 9)
-            self.set_text_color(128, 128, 128)
-            self.cell(0, 10, f"{self.page_no()}", align='R')
+        if not self._cover_done or self.page_no() <= 1:
+            return
+        self.set_y(-12)
+        self.set_font("DejaVu", "", 8)
+        self.set_text_color(150, 150, 150)
+        title = clean_unicode(self._chapter_title[:50])
+        self.cell(0, 5, title, align='L')
+        self.cell(0, 5, SITE_NAME, align='R')
+        self.set_text_color(255, 255, 255)
 
 
 # ==========================================
@@ -2730,6 +2755,7 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
     pdf.add_font("DejaVu", "B", FONT_BOLD)
     pdf.set_margins(left=20, top=20, right=20)
     pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_page_background((0, 0, 0))  # dark theme: semua halaman background hitam
 
     chapters_data = []
     first_cover_img = None
@@ -2839,14 +2865,15 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
         log("   ⚠️ Tidak ada bab yang berhasil di-scrape, PDF dilewati.", "WARN")
         return
 
-    if first_cover_img:
         pdf.add_page()
+        pdf._chapter_title = ""
         pdf.image(first_cover_img, x=0, y=0, w=210, h=297)
+    pdf._cover_done = True
 
     if story_title or source_domain:
         pdf.add_page()
+        pdf._chapter_title = story_title or ""
         pdf.set_font("DejaVu", 'B', 20)
-        pdf.set_text_color(0, 0, 0)
         pdf.ln(60)
         if story_title:
             pdf.multi_cell(0, 12, clean_unicode(story_title), align='C')
@@ -2855,6 +2882,7 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
             pdf.set_font("DejaVu", '', 10)
             pdf.set_text_color(140, 140, 140)
             pdf.cell(0, 8, f"Source: {source_domain}", align='C')
+            pdf.set_text_color(255, 255, 255)
 
     # ---------- DAFTAR ISI (bisa lebih dari 1 halaman) ----------
     # Kapasitas per halaman dihitung dari tinggi baris entri yang FIXED
@@ -2882,11 +2910,11 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
     else:
         toc_pages_needed = 1 + math.ceil(
             (num_chapters - toc_capacity_first) / toc_capacity_other
-        )
+)
 
-    pdf.add_page()
-    pdf.set_font("DejaVu", 'B', 18)
-    pdf.set_text_color(0, 0, 0)
+        pdf.add_page()
+        pdf._chapter_title = ""
+        pdf.set_font("DejaVu", 'B', 18)
     pdf.cell(0, 15, "DAFTAR ISI", align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_line_width(0.6)
     pdf.line(pdf.get_x(), pdf.get_y(), 190, pdf.get_y())
@@ -2905,13 +2933,14 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
 
     for ch in chapters_data:
         pdf.add_page()
+        pdf._chapter_title = clean_unicode(ch['title'])
         ch['page_number'] = pdf.page_no()
         pdf.set_link(ch['link_id'], page=ch['page_number'])
 
         clean_title = clean_unicode(ch['title'])
         pdf.start_section(clean_title)
         pdf.set_font("DejaVu", 'B', 16)
-        pdf.set_text_color(0, 0, 0)
+        # align='L' lebih aman untuk multi_cell width=0
         pdf.multi_cell(0, 8, clean_title, align='L')
         pdf.ln(4)
         pdf.set_line_width(0.5)
@@ -2959,11 +2988,11 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
             ch = chapters_data[entry_idx]
             entry_idx += 1
             clean_ch_title = clean_unicode(ch['title'])
-            pdf.set_text_color(30, 80, 160)
+            pdf.set_text_color(100, 180, 255)
             toc_text = f"{entry_idx}. {clean_ch_title}"
             toc_text = truncate_for_toc(pdf, toc_text, 138)
             pdf.cell(145, 8, toc_text, link=ch['link_id'])
-            pdf.set_text_color(100, 100, 100)
+            pdf.set_text_color(180, 180, 180)
             pdf.cell(0, 8, f"Hal. {ch['page_number']}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT, link=ch['link_id'])
             pdf.ln(1.5)
             pdf.set_font("DejaVu", size=11)
