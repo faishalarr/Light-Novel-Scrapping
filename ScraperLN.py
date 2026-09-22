@@ -5,6 +5,7 @@ import html
 import time
 import math
 import datetime
+import tempfile
 import requests
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup, NavigableString
@@ -235,6 +236,12 @@ class NovelPDF(FPDF):
 
     _chapter_title = ""
     _cover_done = False
+
+    def add_page(self, *args, **kwargs):
+        """Override: set background hitam + text putih di SETIAP halaman baru."""
+        super().add_page(*args, **kwargs)
+        self.set_page_background((0, 0, 0))
+        self.set_text_color(255, 255, 255)
 
     def header(self):
         if self._cover_done and self.page_no() > 1:
@@ -2865,15 +2872,61 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
         log("   ⚠️ Tidak ada bab yang berhasil di-scrape, PDF dilewati.", "WARN")
         return
 
+    # COVER PAGE
+    cover_drawn = False
+    if first_cover_img:
+        try:
+            import io as _io, tempfile as _tmp
+            raw = first_cover_img.read() if hasattr(first_cover_img, 'read') else first_cover_img
+            # Convert WebP/PNG to JPEG jika perlu (fpdf2 gak support WebP)
+            if raw[:4] == b'RIFF':  # WebP
+                try:
+                    from PIL import Image as _PIL
+                    _img = _PIL.open(io.BytesIO(raw))
+                    buf = io.BytesIO()
+                    _img.convert('RGB').save(buf, format='JPEG', quality=90)
+                    raw = buf.getvalue()
+                except Exception:
+                    pass
+            _tmpf = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+            _tmpf.write(raw)
+            _tmpf.close()
+            pdf.add_page()
+            pdf._chapter_title = ""
+            pdf.image(_tmpf.name, x=0, y=0, w=210, h=297)
+            cover_drawn = True
+            try:
+                import os as _os
+                _os.unlink(_tmpf.name)
+            except Exception:
+                pass
+        except Exception as e:
+            log(f"   ⚠️ Cover image gagal render: {e}", "WARN")
+            pdf.add_page()
+            pdf._chapter_title = ""
+    if not cover_drawn:
         pdf.add_page()
         pdf._chapter_title = ""
-        pdf.image(first_cover_img, x=0, y=0, w=210, h=297)
+        if story_title:
+            pdf.set_font("DejaVu", 'B', 22)
+            pdf.ln(80)
+            pdf.multi_cell(0, 14, clean_unicode(story_title), align='C')
+        if source_domain:
+            pdf.ln(15)
+            pdf.set_font("DejaVu", '', 10)
+            pdf.set_text_color(140, 140, 140)
+            pdf.cell(0, 8, f"Source: {source_domain}", align='C')
+            pdf.set_text_color(255, 255, 255)
     pdf._cover_done = True
 
+    # SOURCE PAGE
     if story_title or source_domain:
         pdf.add_page()
+        pdf.set_page_background((0, 0, 0))
+        pdf.set_text_color(255, 255, 255)
         pdf._chapter_title = story_title or ""
         pdf.set_font("DejaVu", 'B', 20)
+        pdf.set_text_color(255, 255, 255)
         pdf.ln(60)
         if story_title:
             pdf.multi_cell(0, 12, clean_unicode(story_title), align='C')
@@ -2884,7 +2937,7 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
             pdf.cell(0, 8, f"Source: {source_domain}", align='C')
             pdf.set_text_color(255, 255, 255)
 
-    # ---------- DAFTAR ISI (bisa lebih dari 1 halaman) ----------
+    # ---------- DAFTAR ISI (selalu halaman terpisah) ----------
     # Kapasitas per halaman dihitung dari tinggi baris entri yang FIXED
     # (cell 8mm + ln 1.5mm = 9.5mm, karena truncate_for_toc udah jamin
     # tiap judul selalu 1 baris), dibagi sisa ruang halaman sampai batas
@@ -2910,11 +2963,11 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
     else:
         toc_pages_needed = 1 + math.ceil(
             (num_chapters - toc_capacity_first) / toc_capacity_other
-)
+    )
 
-        pdf.add_page()
-        pdf._chapter_title = ""
-        pdf.set_font("DejaVu", 'B', 18)
+    pdf.add_page()
+    pdf._chapter_title = ""
+    pdf.set_font("DejaVu", 'B', 18)
     pdf.cell(0, 15, "DAFTAR ISI", align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_line_width(0.6)
     pdf.line(pdf.get_x(), pdf.get_y(), 190, pdf.get_y())
