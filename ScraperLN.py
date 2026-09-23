@@ -3233,8 +3233,8 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
                 img_data = fetch_image(elem['src'], referer=elem.get('referer'))
                 if img_data:
                     try:
+                        pdf.add_page()
                         pdf.image(img_data, x=25, w=160)
-                        pdf.ln(6)
                     except Exception:
                         pass
             elif elem['type'] == 'text':
