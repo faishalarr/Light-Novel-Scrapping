@@ -692,7 +692,7 @@ def print_summary(t_start_total):
 def login_veinovel():
     """Login ke VeiNovel pakai credential dari env var VEI_EMAIL & VEI_PASSWORD.
     Laravel/Inertia flow:
-      1. GET /login -> ambil CSRF token (_token) + session cookie
+      1. GET /auth -> ambil CSRF token dari meta tag
       2. POST /login -> kirim email, password, _token
     Set IS_LOGGED_IN = True kalau berhasil."""
     global IS_LOGGED_IN
@@ -704,20 +704,20 @@ def login_veinovel():
 
     log(f"🔑 Mencoba login sebagai {email}...")
     try:
-        # Step 1: GET /login buat ambil CSRF token
-        login_page = SESSION.get("https://veinovel.com/login", headers=HEADERS, timeout=20)
+        # Step 1: GET /auth (halaman login) buat ambil CSRF token dari meta tag
+        login_page = SESSION.get("https://veinovel.com/auth", headers=HEADERS, timeout=20)
         if login_page.status_code != 200:
             log(f"   ⚠️ Gagal buka halaman login (status {login_page.status_code}).", "WARN")
             return False
 
-        # Ambil _token dari form (Inertia/Laravel: hidden input name="_token")
-        m = re.search(r'name="_token"\s+value="([^"]+)"', login_page.text)
+        # Ambil CSRF token dari <meta name="csrf-token" content="...">
+        m = re.search(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', login_page.text)
         if not m:
             log("   ⚠️ Gak nemu CSRF token di halaman login.", "WARN")
             return False
         csrf_token = m.group(1)
 
-        # Step 2: POST /login
+        # Step 2: POST /login (login.attempt route)
         login_data = {
             "_token": csrf_token,
             "email": email,
@@ -729,7 +729,7 @@ def login_veinovel():
         headers_post["X-Inertia"] = "true"
         headers_post["Accept"] = "application/json"
         headers_post["Origin"] = "https://veinovel.com"
-        headers_post["Referer"] = "https://veinovel.com/login"
+        headers_post["Referer"] = "https://veinovel.com/auth"
 
         res = SESSION.post("https://veinovel.com/login", data=login_data, headers=headers_post, timeout=30)
 
