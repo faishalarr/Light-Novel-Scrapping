@@ -28,19 +28,30 @@ SERIES_URLS_FILE = "VeiSeriesUrls.txt"
 
 SKIP_EXISTING_PDF = True
 
+# Nama situs yang ditampilkan di footer tiap halaman (band kanan bawah).
+SITE_NAME = "VeiNovel"
+
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
 }
 
+# Nama family internal yang dipakai di semua pdf.set_font()/add_font().
+# Cuma label -- ganti font (mis. ke serif) TIDAK perlu ubah pemanggilan
+# set_font() di tempat lain, cukup ganti FONT_REGULAR/FONT_BOLD di bawah.
+FONT_FAMILY = "NovelFont"
+
 FONT_DIR = "fonts"
-FONT_REGULAR = os.path.join(FONT_DIR, "DejaVuSans.ttf")
-FONT_BOLD = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
+FONT_REGULAR = os.path.join(FONT_DIR, "NovelSerif-Regular.ttf")
+FONT_BOLD = os.path.join(FONT_DIR, "NovelSerif-Bold.ttf")
 
 for _path in (FONT_REGULAR, FONT_BOLD):
     if not os.path.exists(_path):
         raise FileNotFoundError(
-            f"Font '{_path}' tidak ditemukan. Taruh DejaVuSans.ttf dan "
-            f"DejaVuSans-Bold.ttf di folder '{FONT_DIR}/' sekali saja, "
+            f"Font '{_path}' tidak ditemukan. Taruh file .ttf regular "
+            f"dan bold-nya di folder '{FONT_DIR}/' dengan nama persis "
+            f"'{os.path.basename(FONT_REGULAR)}' dan "
+            f"'{os.path.basename(FONT_BOLD)}' (atau edit FONT_REGULAR/"
+            f"FONT_BOLD di atas biar cocok sama nama file font kamu), "
             f"lalu jalankan lagi."
         )
 
@@ -74,6 +85,7 @@ def log(msg, level="INFO"):
 
 
 class NovelPDF(FPDF):
+    _chapter_title = ""
     _image_only_pages = set()
     _next_page_is_image = False
 
@@ -82,28 +94,179 @@ class NovelPDF(FPDF):
         if self._next_page_is_image:
             self._image_only_pages.add(self.page_no())
             self._next_page_is_image = False
+        else:
+            self.set_page_background((0, 0, 0))
+        self.set_text_color(255, 255, 255)
 
     def header(self):
         if self.page_no() <= 1:
             return
         if self._next_page_is_image or self.page_no() in self._image_only_pages:
             return
+        self.set_y(5.1)
+        self.set_font(FONT_FAMILY, "", 12)
+        self.set_text_color(255, 255, 255)
+        self.cell(0, 6, f"Page | {self.page_no()}", align='R')
+        self.set_draw_color(217, 217, 217)
+        self.set_line_width(0.17)
+        self.line(self.l_margin, 11.85, self.w - self.r_margin, 11.85)
+        self.set_y(self.t_margin)
+
+    def _fit_text_to_width(self, text, max_width, ellipsis="..."):
+        """Potong `text` (kalau perlu) supaya muat di `max_width` (mm)
+        pas dirender dengan font yang lagi aktif, ditambah '...' di
+        akhir kalau emang kepotong."""
+        if self.get_string_width(text) <= max_width:
+            return text
+        ellipsis_w = self.get_string_width(ellipsis)
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            candidate = text[:mid].rstrip()
+            if self.get_string_width(candidate) + ellipsis_w <= max_width:
+                lo = mid
+            else:
+                hi = mid - 1
+        return (text[:lo].rstrip() + ellipsis) if lo > 0 else ellipsis
+
+    def _fit_title_lines(self, text, max_width, max_font=11, min_font=7, font_style=""):
+        """Cari ukuran font terbesar yang bikin `text` muat dalam SATU
+        baris selebar `max_width`. Kalau di font terkecil pun tetap
+        kepanjangan, dipecah jadi 2 baris (greedy per kata).
+
+        CATATAN PENTING #1: sengaja cuma manggil set_font() SEDIKIT
+        mungkin kali (bukan loop nyoba tiap ukuran satu-satu dari
+        max_font turun ke min_font). Lebar teks TrueType itu linear
+        terhadap ukuran font, jadi ukuran yang pas bisa dihitung
+        langsung dari SATU pengukuran + rasio, tanpa perlu banyak
+        pemanggilan set_font().
+
+        CATATAN PENTING #2: `font_style` default REGULAR ("", bukan
+        "B"). Sudah diuji: manggil set_font(..., "B", ...) dari DALAM
+        footer() -- di ukuran berapa pun, walau ukurannya udah dipakai
+        di tempat lain -- bikin fpdf2 salah nge-render teks di halaman
+        DAFTAR ISI yang diisi belakangan lewat teknik "mundur"
+        (pdf.page = N ke halaman yang udah ada) jadi karakter acak
+        (isinya sendiri tetap benar, cuma glyph yang salah). Font Bold
+        di footer() adalah pemicunya, terlepas dari size/jumlah
+        pemanggilan -- jadi footer WAJIB pakai style regular, bukan
+        soal optimasi jumlah set_font() semata. Style Bold masih aman
+        dipakai di tempat lain (mis. chapter_title(), heading TOC)
+        karena itu dirender maju/normal, bukan dari dalam footer()."""
+        if not text:
+            self.set_font(FONT_FAMILY, font_style, max_font)
+            return max_font, [""]
+
+        self.set_font(FONT_FAMILY, font_style, max_font)
+        w_at_max = self.get_string_width(text)
+        if w_at_max <= max_width:
+            return max_font, [text]
+
+        # Skala linear: lebar teks di ukuran X = w_at_max * (X / max_font).
+        # Cari X terbesar (dibulatkan ke bawah) yang muat, dari situ
+        # cuma perlu verifikasi di SATU ukuran (bukan loop semua ukuran).
+        ideal_size = int((max_width / w_at_max) * max_font)
+        size = max(min_font, min(max_font, ideal_size))
+        self.set_font(FONT_FAMILY, font_style, size)
+        # Kalau perkiraan meleset dikit (pembulatan/kerning), turunin 1pt
+        # sampai muat atau mentok min_font -- biasanya cuma butuh 0-1x
+        # percobaan tambahan, bukan loop penuh max_font..min_font.
+        while size > min_font and self.get_string_width(text) > max_width:
+            size -= 1
+            self.set_font(FONT_FAMILY, font_style, size)
+        if self.get_string_width(text) <= max_width:
+            return size, [text]
+
+        # Gak muat 1 baris walau udah di font terkecil -> pecah jadi 2 baris.
+        words = text.split(' ')
+        line1 = ""
+        i = 0
+        while i < len(words):
+            candidate = (line1 + " " + words[i]).strip()
+            if self.get_string_width(candidate) <= max_width:
+                line1 = candidate
+                i += 1
+            else:
+                break
+        if i == 0:
+            line1 = self._fit_text_to_width(words[0], max_width)
+            i = 1
+        line2 = " ".join(words[i:]).strip()
+        if not line2:
+            return min_font, [line1]
+        line2 = self._fit_text_to_width(line2, max_width)
+        return min_font, [line1, line2]
 
     def footer(self):
         if self.page_no() <= 1:
             return
         if self._next_page_is_image or self.page_no() in self._image_only_pages:
             return
-        self.set_y(-15)
-        self.set_font("DejaVu", '', 9)
-        self.set_text_color(128, 128, 128)
-        self.cell(0, 10, f"{self.page_no()}", align='R')
+        usable_w = self.w - self.l_margin - self.r_margin
+        half_w = usable_w / 2
+        title_max_w = half_w - 2
+        title_text = clean_unicode(self._chapter_title)
+        # Style REGULAR ("") -- LIHAT catatan penting #2 di
+        # _fit_title_lines soal kenapa footer gak boleh pakai Bold.
+        font_size, title_lines = self._fit_title_lines(title_text, title_max_w)
+        line_h = 4.5 if len(title_lines) == 1 else 3.6
+        band_top = self.h - self.b_margin + 0.5
+        band_h = max(5.0, line_h * len(title_lines) + 1.5)
+        self.set_fill_color(211, 211, 211)
+        self.rect(self.l_margin, band_top, usable_w, band_h, 'F')
+        self.set_text_color(0, 0, 0)
+        self.set_font(FONT_FAMILY, "", font_size)
+        text_y = band_top + (band_h - line_h * len(title_lines)) / 2
+        for i, line in enumerate(title_lines):
+            self.set_xy(self.l_margin, text_y + i * line_h)
+            self.cell(half_w, line_h, line, align='L')
+        self.set_font(FONT_FAMILY, "", 11)
+        self.set_xy(self.l_margin + half_w, band_top)
+        self.cell(half_w, band_h, SITE_NAME, align='R')
+        self.set_text_color(255, 255, 255)
+
+    def chapter_title(self, title):
+        self.set_font(FONT_FAMILY, "B", 18)
+        self.set_text_color(255, 255, 255)
+        self.set_x(self.l_margin)
+        self.multi_cell(0, 9, clean_unicode(title), align='C')
+        self.ln(4)
+        self.set_line_width(0.5)
+        y_line = self.get_y()
+        self.line(self.l_margin, y_line, self.w - self.r_margin, y_line)
+        self.ln(8)
+
+    def _first_line_indent_prefix(self, indent_mm=12.7):
+        """Fpdf gak punya first-line-indent bawaan; set_x nge-indent
+        SEMUA baris paragraf, bukan cuma baris pertama. Trik: tempel
+        spasi di depan teks paragraf secukupnya biar lebar visualnya
+        kira-kira sama dengan `indent_mm` (default 0.5 inch)."""
+        space_w = self.get_string_width(" ")
+        if space_w <= 0:
+            return "    "
+        n = max(1, round(indent_mm / space_w))
+        return " " * n
+
+
+# Karakter CJK punctuation yang kadang nongol di teks novel sebagai
+# tanda kutip pesan teks (chat/SMS): 『...』 (white corner brackets) dan
+# 「...」 (raised corner brackets). Glyph karakter-karakter ini biasanya
+# TIDAK ada di font Latin/serif (termasuk DejaVuSans), jadi kalau
+# diterusin mentah ke fpdf2 bakal di-skip senyap dan gak nongol di PDF.
+# Ganti ke ASCII bracket [ ] yang hampir pasti ada di font apa pun.
+_CJK_PUNCT_TO_ASCII = {
+    '\u300e': '[',  # 『 -> [
+    '\u300f': ']',  # 』 -> ]
+    '\u300c': '[',  # 「 -> [
+    '\u300d': ']',  # 」 -> ]
+}
 
 
 def clean_unicode(text):
     if not text:
         return ""
     replacements = {'\u00a0': ' ', '\u200b': ''}
+    replacements.update(_CJK_PUNCT_TO_ASCII)
     for orig, repl in replacements.items():
         text = text.replace(orig, repl)
     return text
@@ -115,15 +278,52 @@ def sanitize_filename(name):
     return name or "Novel"
 
 
+# Batas percobaan ulang buat fetch halaman/chapter yang gagal sesaat
+# (mis. 404/5xx transien atau koneksi putus gara-gara request beruntun
+# terlalu cepat). Jeda antar percobaan makin lama tiap kali gagal.
+MAX_RETRY = 3
+
+
 def fetch_url(url):
     res = requests.get(url, headers=HEADERS, timeout=20)
     res.encoding = 'utf-8'
     return res
 
 
-def fetch_image(src_url):
+def fetch_url_with_retry(url, max_retry=MAX_RETRY):
+    """Sama seperti fetch_url, tapi coba ulang sampai `max_retry` kali
+    kalau koneksi gagal atau status bukan 200, dengan jeda yang makin
+    lama tiap percobaan. Balikin (response, error_message); response
+    None kalau semua percobaan gagal."""
+    res = None
+    last_error = None
+    for attempt in range(1, max_retry + 1):
+        try:
+            res = fetch_url(url)
+        except Exception as e:
+            last_error = f"koneksi gagal: {e}"
+            res = None
+        else:
+            if res.status_code == 200:
+                return res, None
+            last_error = f"status {res.status_code}"
+            res = None
+        if attempt < max_retry:
+            log(f"    ↻ Percobaan {attempt} gagal ({last_error}), coba lagi...", "WARN")
+            time.sleep(2 * attempt)
+    return None, last_error
+
+
+def fetch_image(src_url, referer=None):
+    """Unduh gambar. `referer` opsional buat CDN yang nolak request
+    tanpa header Referer yang cocok (proteksi hotlink) -> balikin 403
+    meski URL-nya valid."""
+    headers = HEADERS
+    if referer:
+        headers = dict(HEADERS)
+        headers['Referer'] = referer
     try:
-        img_res = requests.get(src_url, headers=HEADERS, timeout=20)
+        img_res = requests.get(src_url, headers=headers, timeout=20)
         if img_res.status_code == 200:
             STATS["gambar_ok"] += 1
             return io.BytesIO(img_res.content)
@@ -132,6 +332,27 @@ def fetch_image(src_url):
         log(f"    ⚠️ Gagal mengunduh gambar ({src_url[:50]}...): {e}", "WARN")
     STATS["gambar_gagal"] += 1
     return None
+
+
+def to_pdf_safe_image(img_data):
+    """fpdf2 gak support format WebP. Kalau gambarnya WebP (dideteksi
+    dari magic bytes 'RIFF'), convert ke JPEG dulu pakai Pillow sebelum
+    dikembalikan. Format lain (PNG/JPEG) dikembalikan apa adanya."""
+    try:
+        img_data.seek(0)
+        header = img_data.read(4)
+        img_data.seek(0)
+        if header[:4] == b'RIFF':
+            from PIL import Image as _PIL
+            _img = _PIL.open(img_data)
+            buf = io.BytesIO()
+            _img.convert('RGB').save(buf, format='JPEG', quality=90)
+            buf.seek(0)
+            return buf
+    except Exception as e:
+        log(f"    ⚠️ Gagal convert gambar WebP->JPEG: {e}", "WARN")
+        img_data.seek(0)
+    return img_data
 
 
 def extract_inertia_data(page_html):
@@ -178,9 +399,9 @@ def get_series_and_chapters(entry_url):
     """Dari SATU URL chapter mana saja, ambil info series + daftar
     LENGKAP semua chapter (grouped nanti per volume)."""
     log(f"📖 Membaca: {entry_url}")
-    res = fetch_url(entry_url)
-    if res.status_code != 200:
-        raise RuntimeError(f"Gagal membuka halaman (status {res.status_code}).")
+    res, err = fetch_url_with_retry(entry_url)
+    if res is None:
+        raise RuntimeError(f"Gagal membuka halaman setelah {MAX_RETRY}x percobaan ({err}).")
 
     data = extract_inertia_data(res.text)
     props = data.get('props', {})
@@ -209,10 +430,11 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
     slug = series['slug']
 
     pdf = NovelPDF()
-    pdf.add_font("DejaVu", "", FONT_REGULAR)
-    pdf.add_font("DejaVu", "B", FONT_BOLD)
+    pdf.add_font(FONT_FAMILY, "", FONT_REGULAR)
+    pdf.add_font(FONT_FAMILY, "B", FONT_BOLD)
     pdf.set_margins(left=20, top=20, right=20)
     pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_page_background((0, 0, 0))  # dark theme: semua halaman background hitam
 
     chapters_data = []
 
@@ -225,8 +447,13 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
         chapter_url = f"https://veinovel.com/series/{slug}/chapter/{cm['chapter_link']}"
         t_ch = time.time()
         log(f"  Scraping: {chapter_url}")
+        res, err = fetch_url_with_retry(chapter_url)
+        if res is None:
+            log(f"    ⚠️ Gagal ambil chapter setelah {MAX_RETRY}x percobaan ({err}), dilewati.", "WARN")
+            STATS["chapter_gagal"] += 1
+            STATS["errors"].append(f"{chapter_url} -> {err}")
+            continue
         try:
-            res = fetch_url(chapter_url)
             data = extract_inertia_data(res.text)
         except Exception as e:
             log(f"    ⚠️ Gagal ambil chapter ({e}), dilewati.", "WARN")
@@ -262,6 +489,7 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
         img_data = fetch_image(cover_url)
         if img_data:
             try:
+                img_data = to_pdf_safe_image(img_data)
                 from PIL import Image as _PIL2
                 img_data.seek(0)
                 _img_check = _PIL2.open(img_data)
@@ -278,14 +506,16 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
     # --- HALAMAN JUDUL (judul novel + source) ---
     story_title = series.get('title', 'Novel')
     pdf.add_page()
-    pdf.set_font("DejaVu", 'B', 20)
-    pdf.set_text_color(0, 0, 0)
+    pdf._chapter_title = ""
+    pdf.set_font(FONT_FAMILY, 'B', 20)
+    pdf.set_text_color(255, 255, 255)
     pdf.ln(60)
     pdf.multi_cell(0, 12, clean_unicode(story_title), align='C')
     pdf.ln(20)
-    pdf.set_font("DejaVu", '', 10)
-    pdf.set_text_color(140, 140, 140)
+    pdf.set_font(FONT_FAMILY, '', 10)
+    pdf.set_text_color(180, 180, 180)
     pdf.cell(0, 8, "Source: veinovel.com", align='C')
+    pdf.set_text_color(255, 255, 255)
 
     # --- DAFTAR ISI (multi-halaman) ---
     TOC_ROW_HEIGHT = 9.5
@@ -304,8 +534,9 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
         )
 
     pdf.add_page()
-    pdf.set_font("DejaVu", 'B', 18)
-    pdf.set_text_color(0, 0, 0)
+    pdf._chapter_title = ""
+    pdf.set_font(FONT_FAMILY, 'B', 18)
+    pdf.set_text_color(255, 255, 255)
     pdf.cell(0, 15, "DAFTAR ISI", align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_line_width(0.6)
     pdf.line(pdf.get_x(), pdf.get_y(), 190, pdf.get_y())
@@ -324,23 +555,18 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
 
         clean_title = clean_unicode(ch['title'])
         pdf.start_section(clean_title)
+        pdf._chapter_title = clean_title
+        pdf.chapter_title(clean_title)
 
-        pdf.set_font("DejaVu", 'B', 16)
-        pdf.set_text_color(0, 0, 0)
-        pdf.multi_cell(0, 8, clean_title, align='L')
-        pdf.ln(4)
-
-        pdf.set_line_width(0.5)
-        y_line = pdf.get_y()
-        pdf.line(pdf.get_x(), y_line, 190, y_line)
-        pdf.ln(10)
-
-        pdf.set_font("DejaVu", size=11)
+        pdf.set_font(FONT_FAMILY, size=11)
+        pdf.set_text_color(255, 255, 255)
+        is_first_paragraph = True
         for elem in ch['elements']:
             if elem['type'] == 'img':
                 img_data = fetch_image(elem['src'])
                 if img_data:
                     try:
+                        img_data = to_pdf_safe_image(img_data)
                         from PIL import Image as _PIL2
                         img_data.seek(0)
                         _img_check = _PIL2.open(img_data)
@@ -355,10 +581,27 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
                         log(f"    ⚠️ Gagal render gambar: {e}", "WARN")
             elif elem['type'] == 'text':
                 clean_text = clean_unicode(elem['value'])
-                pdf.multi_cell(0, 6.5, clean_text, align='L')
+                pdf.set_font(FONT_FAMILY, size=11)
+                pdf.set_text_color(255, 255, 255)
+                pdf.set_x(pdf.l_margin)
+                # Paragraf pertama di chapter: rata kiri tanpa indent.
+                # Paragraf berikutnya: baris pertama di-indent 0.5"
+                # (fpdf gak punya first-line-indent bawaan, jadi pakai
+                # spasi buatan di depan teks -- lihat
+                # _first_line_indent_prefix).
+                if is_first_paragraph:
+                    body_text = clean_text
+                    is_first_paragraph = False
+                else:
+                    body_text = pdf._first_line_indent_prefix() + clean_text
+                # align='L' (bukan 'J'): biar spasi indentasi buatan di
+                # depan paragraf gak ikut diregangkan oleh mesin justify
+                # FPDF pada baris yang bukan baris terakhir paragraf.
+                pdf.multi_cell(0, 6.5, body_text, align='L')
                 pdf.ln(4)
 
     # --- ISI DAFTAR ISI ---
+    last_page_number = pdf.page_no()  # halaman terakhir (bab terakhir), direstore di bawah
     entry_idx = 0
     for page_i, page_num in enumerate(toc_page_numbers):
         pdf.page = page_num
@@ -368,7 +611,7 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
         else:
             pdf.set_y(TOC_OTHER_PAGE_START_Y)
             capacity = toc_capacity_other
-        pdf.set_font("DejaVu", size=11)
+        pdf.set_font(FONT_FAMILY, size=11)
 
         for _ in range(capacity):
             if entry_idx >= num_chapters:
@@ -376,16 +619,26 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
             ch = chapters_data[entry_idx]
             entry_idx += 1
             clean_ch_title = clean_unicode(ch['title'])
-            pdf.set_text_color(30, 80, 160)
+            pdf.set_text_color(120, 170, 255)
             toc_text = f"{entry_idx}. {clean_ch_title}"
             toc_text = truncate_for_toc(pdf, toc_text, 138)
             pdf.cell(145, 8, toc_text, link=ch['link_id'])
-            pdf.set_text_color(100, 100, 100)
+            pdf.set_text_color(190, 190, 190)
             pdf.cell(0, 8, f"Hal. {ch['page_number']}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT, link=ch['link_id'])
             pdf.ln(1.5)
 
         if entry_idx >= num_chapters:
             break
+
+    # PENTING: loop di atas "mundur" ke halaman TOC (pdf.page = page_num)
+    # buat nulis entrinya, dan gak pernah add_page() lagi setelahnya.
+    # Kalau pointer halaman dibiarkan nyangkut di TOC pas pdf.output()
+    # dipanggil, fpdf2 nge-finalize (dan manggil footer()) utk halaman
+    # TOC itu SEKALI LAGI, bukan buat halaman bab terakhir -- akibatnya
+    # halaman bab terakhir gak pernah kebagian footer sama sekali.
+    # Restore pointer ke halaman terakhir sebelum output() biar footer
+    # bab terakhir ikut ke-render.
+    pdf.page = last_page_number
 
     pdf.output(output_path)
     STATS["volume_ok"] += 1
@@ -456,7 +709,7 @@ if __name__ == "__main__":
 
         for vol_num in sorted(volumes):
             log(f"\n=== Volume {vol_num} ({len(volumes[vol_num])} bab) ===")
-            output_name = os.path.join(OUTPUT_DIR, f"{safe_title} Vol {vol_num}.pdf")
+            output_name = os.path.join(OUTPUT_DIR, f"{safe_title} Vol {vol_num}_[{SITE_NAME}].pdf")
             build_pdf_for_volume(series, volumes[vol_num], output_name)
 
         STATS["series_ok"] += 1
