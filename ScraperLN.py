@@ -765,6 +765,7 @@ def get_story_title_blogger(soup):
     h1 = soup.find('h1', class_='post-title') or soup.find('h1')
     title = h1.get_text(strip=True) if h1 else "Novel"
     title = re.sub(r'\[LN\]\s*Bahasa Indonesia', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'\[ENG\]\s*', '', title, flags=re.IGNORECASE)
     title = re.sub(r'\s*Volume\s*\d+\s*$', '', title, flags=re.IGNORECASE)
     title = re.sub(r'\s*~\s*$', '', title)
     return title.strip()
@@ -2947,6 +2948,7 @@ def strip_novel_prefix_from_title(title, story_title):
     if not title or not story_title:
         return title
     t = title.strip()
+    t = re.sub(r'^\[ENG\]\s*', '', t, flags=re.IGNORECASE)
     st = story_title.strip()
     if not t.lower().startswith(st.lower()):
         return t
@@ -3410,7 +3412,7 @@ if __name__ == "__main__":
                 urls = [u for u, _label in volumes[vol_num]]
                 url_labels = {u: label for u, label in volumes[vol_num]}
                 log(f"\n=== Memproses Volume {vol_num} ({len(urls)} bab) ===")
-                output_name = os.path.join(OUTPUT_DIR, f"{safe_story_title} Vol {vol_num}.pdf")
+                output_name = os.path.join(OUTPUT_DIR, f"{safe_story_title} Vol {vol_num}_[{SITE_NAME}].pdf")
                 if vol_num in vol_covers_kdt:
                     vol_cover_url, vol_cover_referer = vol_covers_kdt[vol_num]
                 elif vol_num in vol_covers_wpcom:
@@ -3475,7 +3477,7 @@ if __name__ == "__main__":
                     vol_cover_referer = None
                     log("   ℹ️ Cover gak ketemu, PDF bakal dibuat tanpa halaman sampul.", "WARN")
 
-                output_name = os.path.join(OUTPUT_DIR, f"{safe_story_title} Vol {vol_num}.pdf")
+                output_name = os.path.join(OUTPUT_DIR, f"{safe_story_title} Vol {vol_num}_[{SITE_NAME}].pdf")
                 build_pdf_for_urls(
                     urls, output_name, cover_image_url=vol_cover, cover_referer=vol_cover_referer,
                     source_domain=urlparse(start_url).netloc, story_title=story_title
@@ -3497,7 +3499,7 @@ if __name__ == "__main__":
         urls = load_urls(URLS_FILE, required=True)
         story_title = title_from_slug(urls[0])
         safe_title = sanitize_filename(story_title)
-        output_name = os.path.join(OUTPUT_DIR, f"{safe_title}_{SITE_NAME}.pdf")
+        output_name = os.path.join(OUTPUT_DIR, f"{safe_title}_[{SITE_NAME}].pdf")
         log(f"\n=== Memproses {len(urls)} bab (mode manual urls.txt) ===")
         build_pdf_for_urls(urls, output_name, source_domain=urlparse(urls[0]).netloc, story_title=story_title)
         STATS["novel_ok"] += 1
