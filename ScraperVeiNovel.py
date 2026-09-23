@@ -35,6 +35,12 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
 }
 
+# Session requests global -- cookie login (kalau ada) otomatis nempel
+# di semua request (fetch halaman, chapter, gambar).
+SESSION = requests.Session()
+# Track status login: True setelah login_veinovel() berhasil.
+IS_LOGGED_IN = False
+
 # Nama family internal yang dipakai di semua pdf.set_font()/add_font().
 # Cuma label -- ganti font (mis. ke serif) TIDAK perlu ubah pemanggilan
 # set_font() di tempat lain, cukup ganti FONT_REGULAR/FONT_BOLD di bawah.
@@ -285,7 +291,7 @@ MAX_RETRY = 3
 
 
 def fetch_url(url):
-    res = requests.get(url, headers=HEADERS, timeout=20)
+    res = SESSION.get(url, headers=HEADERS, timeout=20)
     res.encoding = 'utf-8'
     return res
 
@@ -323,7 +329,7 @@ def fetch_image(src_url, referer=None):
         headers = dict(HEADERS)
         headers['Referer'] = referer
     try:
-        img_res = requests.get(src_url, headers=headers, timeout=20)
+        img_res = SESSION.get(src_url, headers=headers, timeout=20)
         if img_res.status_code == 200:
             STATS["gambar_ok"] += 1
             return io.BytesIO(img_res.content)
@@ -439,7 +445,7 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
     chapters_data = []
 
     for cm in chapters_meta:
-        if cm.get('is_premium'):
+        if cm.get('is_premium') and not IS_LOGGED_IN:
             log(f"  🔒 Dilewati (chapter premium/berbayar): {cm.get('title')}")
             STATS["chapter_premium_skip"] += 1
             continue
@@ -683,8 +689,77 @@ def print_summary(t_start_total):
     log(f"\n📝 Log lengkap: {LOG_FILE}")
 
 
+def login_veinovel():
+    """Login ke VeiNovel pakai credential dari env var VEI_EMAIL & VEI_PASSWORD.
+    Laravel/Inertia flow:
+      1. GET /login -> ambil CSRF token (_token) + session cookie
+      2. POST /login -> kirim email, password, _token
+    Set IS_LOGGED_IN = True kalau berhasil."""
+    global IS_LOGGED_IN
+    email = os.environ.get("VEI_EMAIL", "").strip()
+    password = os.environ.get("VEI_PASSWORD", "").strip()
+    if not email or not password:
+        log("ℹ️ VEI_EMAIL / VEI_PASSWORD gak di-set, skip login.", "WARN")
+        return False
+
+    log(f"🔑 Mencoba login sebagai {email}...")
+    try:
+        # Step 1: GET /login buat ambil CSRF token
+        login_page = SESSION.get("https://veinovel.com/login", headers=HEADERS, timeout=20)
+        if login_page.status_code != 200:
+            log(f"   ⚠️ Gagal buka halaman login (status {login_page.status_code}).", "WARN")
+            return False
+
+        # Ambil _token dari form (Inertia/Laravel: hidden input name="_token")
+        m = re.search(r'name="_token"\s+value="([^"]+)"', login_page.text)
+        if not m:
+            log("   ⚠️ Gak nemu CSRF token di halaman login.", "WARN")
+            return False
+        csrf_token = m.group(1)
+
+        # Step 2: POST /login
+        login_data = {
+            "_token": csrf_token,
+            "email": email,
+            "password": password,
+        }
+        headers_post = dict(HEADERS)
+        headers_post["X-Requested-With"] = "XMLHttpRequest"
+        headers_post["X-CSRF-TOKEN"] = csrf_token
+        headers_post["X-Inertia"] = "true"
+        headers_post["Accept"] = "application/json"
+        headers_post["Origin"] = "https://veinovel.com"
+        headers_post["Referer"] = "https://veinovel.com/login"
+
+        res = SESSION.post("https://veinovel.com/login", data=login_data, headers=headers_post, timeout=30)
+
+        if res.status_code in (200, 204, 302):
+            # Verifikasi: cek kalau cookie session berubah / ada user
+            cookies = SESSION.cookies.get_dict()
+            if "veinovel_session" in cookies or any("session" in k.lower() for k in cookies):
+                IS_LOGGED_IN = True
+                log("✅ Login berhasil!")
+                return True
+
+        log(f"   ⚠️ Login gagal (status {res.status_code}).", "WARN")
+        if res.status_code == 422:
+            log("   ⚠️ Kemungkinan email/password salah.", "WARN")
+    except Exception as e:
+        log(f"   ⚠️ Error login: {e}", "WARN")
+
+    IS_LOGGED_IN = False
+    return False
+
+
 if __name__ == "__main__":
     t_start_total = time.time()
+
+    # Auto-login kalau env var tersedia
+    if os.environ.get("VEI_EMAIL") or os.environ.get("VEI_PASSWORD"):
+        login_veinovel()
+    else:
+        log("ℹ️ Gak login -- chapter premium bakal dilewati.", "WARN")
+
     entry_urls = load_urls(SERIES_URLS_FILE)
     log(f"📄 {len(entry_urls)} series ditemukan di '{SERIES_URLS_FILE}'")
 
