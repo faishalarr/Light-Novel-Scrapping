@@ -3234,7 +3234,16 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
                 if img_data:
                     try:
                         pdf.add_page()
-                        pdf.image(img_data, x=0, y=0, w=210, h=297)
+                        try:
+                            from PIL import Image as _PIL2
+                            _img_check = _PIL2.open(io.BytesIO(img_data.getvalue() if hasattr(img_data, 'getvalue') else img_data))
+                            is_landscape = _img_check.width > _img_check.height
+                        except Exception:
+                            is_landscape = False
+                        if is_landscape:
+                            pdf.image(img_data, x=0, y=0, w=210)
+                        else:
+                            pdf.image(img_data, x=0, y=0, w=210, h=297)
                     except Exception:
                         pass
             elif elem['type'] == 'text':
