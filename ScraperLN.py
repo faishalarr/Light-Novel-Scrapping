@@ -117,6 +117,9 @@ junk_keywords = [
     # sini sebagai jaring pengaman tambahan.
     'jaku-chara tomozaki-kun', 'facebook twitter',
     'support kami:', 'dukung kami:',
+    # Symbol-symbol yang sering nongol di blogspot LN
+    '★★★', '★★', '☆☆☆', '☆☆', '★★★★', '★★★★★',
+    '★', '☆',
 ]
 
 # Pola regex full-match buat blok junk Blogger yang sering multi-baris
@@ -180,9 +183,21 @@ MADARA_MAX_CHAPTERS = 3000
 # ==========================================
 # FONT UNICODE (WAJIB, biar karakter aneh gak jadi "??")
 # ==========================================
+# Nama family internal yang dipakai di semua pdf.set_font()/add_font()
+# di bawah. Ini cuma label, gak perlu sama dengan nama asli font-nya --
+# jadi ganti font (misal ke serif) TIDAK perlu ubah pemanggilan
+# set_font() di tempat lain, cukup ganti FONT_REGULAR/FONT_BOLD di
+# bawah ini supaya nunjuk ke file .ttf font serif pilihanmu.
+FONT_FAMILY = "NovelFont"
+
 FONT_DIR = "fonts"
-FONT_REGULAR = os.path.join(FONT_DIR, "DejaVuSans.ttf")
-FONT_BOLD = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
+# Default sekarang nunjuk ke font SERIF unicode (mis. Liberation Serif
+# atau Noto Serif), biar hasilnya mirip contoh "Heroine Yandere" (serif),
+# bukan sans-serif DejaVuSans yang lama. Taruh file .ttf-nya di folder
+# 'fonts/' dengan nama persis di bawah ini (atau ubah nama filenya di
+# sini biar cocok sama file yang kamu punya).
+FONT_REGULAR = os.path.join(FONT_DIR, "NovelSerif-Regular.ttf")
+FONT_BOLD = os.path.join(FONT_DIR, "NovelSerif-Bold.ttf")
 
 # Font CJK OPSIONAL. Definisi + subset generator udah di blok atas
 # (baris ~125). Di sini cuma validasi font latin wajib ada + trigger
@@ -190,8 +205,11 @@ FONT_BOLD = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
 for _path in (FONT_REGULAR, FONT_BOLD):
     if not os.path.exists(_path):
         raise FileNotFoundError(
-            f"Font '{_path}' tidak ditemukan. Taruh DejaVuSans.ttf dan "
-            f"DejaVuSans-Bold.ttf di folder '{FONT_DIR}/' sekali saja, "
+            f"Font '{_path}' tidak ditemukan. Taruh file .ttf regular "
+            f"dan bold-nya di folder '{FONT_DIR}/' dengan nama persis "
+            f"'{os.path.basename(FONT_REGULAR)}' dan "
+            f"'{os.path.basename(FONT_BOLD)}' (atau edit FONT_REGULAR/"
+            f"FONT_BOLD di atas biar cocok sama nama file font kamu), "
             f"lalu jalankan lagi."
         )
 
@@ -232,38 +250,154 @@ def log(msg, level="INFO"):
 
 
 class NovelPDF(FPDF):
-    """FPDF subclass dengan dark theme & header/footer otomatis."""
-
     _chapter_title = ""
     _cover_done = False
 
     def add_page(self, *args, **kwargs):
-        """Override: set background hitam + text putih di SETIAP halaman baru."""
         super().add_page(*args, **kwargs)
         self.set_page_background((0, 0, 0))
         self.set_text_color(255, 255, 255)
 
     def header(self):
-        if self._cover_done and self.page_no() > 1:
-            self.set_y(5)
-            self.set_font("DejaVu", "", 8)
-            self.set_text_color(180, 180, 180)
-            self.cell(0, 5, f"Page | {self.page_no()}", align='R')
-            self.set_text_color(255, 255, 255)
-            self.set_y(self.l_margin)
+        if self.page_no() <= 1:
+            return
+        self.set_y(5.1)
+        self.set_font(FONT_FAMILY, "", 16)
+        self.set_text_color(255, 255, 255)
+        self.cell(0, 6, f"Page | {self.page_no()}", align='R')
+        self.set_draw_color(217, 217, 217)
+        self.set_line_width(0.17)
+        self.line(self.l_margin, 11.85, self.w - self.r_margin, 11.85)
+        self.set_y(self.t_margin)
+
+    def _fit_text_to_width(self, text, max_width, ellipsis="..."):
+        """Potong `text` (kalau perlu) supaya muat di `max_width` (mm) pas
+        dirender dengan font yang lagi aktif, ditambah '...' di akhir kalau
+        emang kepotong. Diukur dari lebar asli teksnya (get_string_width),
+        BUKAN dari jumlah karakter -- jadi gak overlap/numpuk kalau
+        hurufnya lebar, dan gak sia-sia kepotong kepagian kalau hurufnya
+        sempit."""
+        if self.get_string_width(text) <= max_width:
+            return text
+        ellipsis_w = self.get_string_width(ellipsis)
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            candidate = text[:mid].rstrip()
+            if self.get_string_width(candidate) + ellipsis_w <= max_width:
+                lo = mid
+            else:
+                hi = mid - 1
+        return (text[:lo].rstrip() + ellipsis) if lo > 0 else ellipsis
 
     def footer(self):
-        if not self._cover_done or self.page_no() <= 1:
+        if self.page_no() <= 1:
             return
-        self.set_y(-12)
-        self.set_font("DejaVu", "", 8)
-        self.set_text_color(150, 150, 150)
-        title = clean_unicode(self._chapter_title[:50])
-        self.cell(0, 5, title, align='L')
-        self.cell(0, 5, SITE_NAME, align='R')
+        # Referensi asli pakai font dekoratif "Britannic Bold" khusus buat
+        # bar ini (beda dari body font). Kalau kamu taruh file ttf-nya di
+        # fonts/ dan add_font sebagai "FooterFont", ganti FONT_FAMILY di
+        # bawah ini jadi "FooterFont". Selama itu belum ada, dipakai bold
+        # dari FONT_FAMILY biasa sebagai fallback.
+        usable_w = self.w - self.l_margin - self.r_margin
+        half_w = usable_w / 2
+        # Sisain sedikit jarak (2mm) dari batas tengah biar judul gak
+        # mepet/numpuk sama SITE_NAME di sebelah kanan.
+        title_max_w = half_w - 2
+        title_text = clean_unicode(self._chapter_title)
+        # Judul PANJANG: coba font makin kecil dulu (14 -> 8) biar tetap 1
+        # baris utuh; kalau di ukuran terkecil pun masih kepanjangan, baru
+        # dipecah jadi 2 baris (bukan dipotong "...") biar judulnya tetap
+        # kebaca lengkap.
+        font_size, title_lines = self._fit_title_lines(title_text, title_max_w)
+        line_h = 5.0 if len(title_lines) == 1 else 4.0
+        band_top = 280.5
+        band_h = max(5.5, line_h * len(title_lines) + 1.5)
+        self.set_fill_color(211, 211, 211)
+        self.rect(self.l_margin, band_top, usable_w, band_h, 'F')
+        self.set_text_color(0, 0, 0)
+        self.set_font(FONT_FAMILY, "B", font_size)
+        text_y = band_top + (band_h - line_h * len(title_lines)) / 2
+        for i, line in enumerate(title_lines):
+            self.set_xy(self.l_margin, text_y + i * line_h)
+            self.cell(half_w, line_h, line, align='L')
+        # SITE_NAME dibikin center-vertikal ke seluruh tinggi band (yang
+        # sekarang bisa lebih tinggi kalau judulnya kepecah 2 baris).
+        self.set_font(FONT_FAMILY, "B", 14)
+        self.set_xy(self.l_margin + half_w, band_top)
+        self.cell(half_w, band_h, SITE_NAME, align='R')
         self.set_text_color(255, 255, 255)
 
+    def _fit_title_lines(self, text, max_width, max_font=14, min_font=8, font_style="B"):
+        """Cari ukuran font terbesar (14 turun sampai 8) yang bikin `text`
+        muat dalam SATU baris selebar `max_width`. Kalau di font terkecil
+        pun tetap kepanjangan buat 1 baris, dipecah jadi 2 baris (per kata,
+        greedy) di font terkecil itu -- baris kedua baru dipotong + '...'
+        (lewat _fit_text_to_width) kalau ternyata MASIH kepanjangan juga.
+        Balikin (font_size, [daftar baris])."""
+        for size in range(max_font, min_font - 1, -1):
+            self.set_font(FONT_FAMILY, font_style, size)
+            if self.get_string_width(text) <= max_width:
+                return size, [text]
 
+        # Gak muat 1 baris walau udah di font terkecil -> pecah jadi 2 baris.
+        self.set_font(FONT_FAMILY, font_style, min_font)
+        words = text.split(' ')
+        line1 = ""
+        i = 0
+        while i < len(words):
+            candidate = (line1 + " " + words[i]).strip()
+            if self.get_string_width(candidate) <= max_width:
+                line1 = candidate
+                i += 1
+            else:
+                break
+        if i == 0:
+            # Satu kata pertama aja udah kepanjangan sendirian -> paksa
+            # muat sebagian kata itu biar baris pertama gak kosong.
+            line1 = self._fit_text_to_width(words[0], max_width)
+            i = 1
+        line2 = " ".join(words[i:]).strip()
+        if not line2:
+            return min_font, [line1]
+        line2 = self._fit_text_to_width(line2, max_width)
+        return min_font, [line1, line2]
+
+    def chapter_title(self, title):
+        self.set_font(FONT_FAMILY, "B", 26)
+        self.set_text_color(255, 255, 255)
+        self.set_x(self.l_margin)
+        self.multi_cell(0, 10, clean_unicode(title), align='C')
+        self.ln(6)
+
+    def _first_line_indent_prefix(self, indent_mm=12.7):
+        space_w = self.get_string_width(" ")
+        if space_w <= 0:
+            return "    "
+        n = max(1, round(indent_mm / space_w))
+        return " " * n
+
+    def chapter_body(self, text):
+        self.set_font(FONT_FAMILY, "", 17)
+        self.set_text_color(255, 255, 255)
+        paragraphs = text.strip().split("\r\n")
+        for i, para in enumerate(paragraphs):
+            para = para.strip()
+            if not para:
+                continue
+            self.set_x(self.l_margin)
+            if i == 0:
+                body_text = clean_unicode(para)
+            else:
+                body_text = self._first_line_indent_prefix() + clean_unicode(para)
+            # align='L' (bukan 'J'): kalau di-justify, spasi indentasi buatan
+            # di depan paragraf ikut diregangkan oleh mesin justify FPDF pada
+            # baris yang BUKAN baris terakhir paragraf -> indentasi jadi
+            # kelihatan beda-beda lebar antar paragraf (paragraf 1 baris vs
+            # paragraf yang kepecah jadi >1 baris kena perlakuan beda).
+            self.multi_cell(0, 6.9, body_text, align='L')
+            self.ln(2)
+
+# ==========================================
 # ==========================================
 # HELPER UMUM
 # ==========================================
@@ -273,11 +407,12 @@ def clean_unicode(text):
     replacements = {
         '\u00a0': ' ',
         '\u200b': '',
-        # CJK punctuation -> ASCII bracket. Glyph 『 』 【 】 「 』 gak
-        # ada di DejaVu Sans default, dan fpdf2 di-skip senyap kalau
-        # font-nya gak punya glyph -> karakter hilang dari PDF. Replace
-        # ke [ ] yang glyph-nya ADA di DejaVu Sans, jadi konteks
-        # "tanda kutip pesan teks" masih kebaca buat novel Indo.
+        # CJK punctuation -> ASCII bracket. Glyph 『 』 【 】 「 』 sering
+        # gak ada di font Latin/serif biasa (termasuk font default
+        # scraper ini), dan fpdf2 di-skip senyap kalau font-nya gak
+        # punya glyph -> karakter hilang dari PDF. Replace ke [ ] yang
+        # hampir pasti ADA di font apa pun, jadi konteks "tanda kutip
+        # pesan teks" masih kebaca buat novel Indo.
     }
     replacements.update(_CJK_PUNCT_TO_ASCII)
     for orig, repl in replacements.items():
@@ -288,12 +423,13 @@ def clean_unicode(text):
 # Karakter CJK punctuation yang sering dipake di LN terjemahan Kaori
 # sebagai tanda kutip pesan teks (chat/SMS): 『...』 (white corner
 # brackets) dan 「...」 (raised corner brackets). Glyph karakter-karakter
-# ini TIDAK ada di font DejaVu Sans (default scraper), jadi kalau
-# diterusin mentah ke fpdf2 bakal di-skip senyap dan gak nongol di PDF.
-# Ganti ke ASCII bracket [ ] (glyph-nya ADA di DejaVu Sans) -- masih
-# kebaca sebagai "tanda kutip pesan" dan visual konsisten buat novel
-# Indo yang gak pake tipografi Jepang. Penugasan lain untuk karakter
-# punctuation CJK ada di dalam clean_unicode() di bawah.
+# ini biasanya TIDAK ada di font Latin/serif (termasuk font default
+# scraper ini), jadi kalau diterusin mentah ke fpdf2 bakal di-skip
+# senyap dan gak nongol di PDF. Ganti ke ASCII bracket [ ] yang hampir
+# pasti ada di font apa pun -- masih kebaca sebagai "tanda kutip pesan"
+# dan visual konsisten buat novel Indo yang gak pake tipografi Jepang.
+# Penugasan lain untuk karakter punctuation CJK ada di dalam
+# clean_unicode() di bawah.
 _CJK_PUNCT_TO_ASCII = {
     '\u300e': '[',  # 『 -> [
     '\u300f': ']',  # 』 -> ]
@@ -1206,7 +1342,14 @@ def get_kdtnovels_volume_covers(volumes):
     ilustrasinya sendiri) WAJIB dikirim balik pas fetch gambar covernya,
     soalnya CDN gambar situs ini nolak (403) request tanpa Referer yang
     cocok. Volume yang gak ketemu halaman ilustrasinya gak masuk dict
-    (nanti fallback ke og:image umum)."""
+    (nanti fallback ke og:image umum).
+
+    PENTING: dulu ini pakai guess_cover_from_first_chapter() yang parse
+    halaman pakai scrape_chapter_madara() -- parser buat tema Madara,
+    BUKAN buat KDTNovels. Sekarang pakai scrape_chapter_kdtnovels()
+    langsung, yang udah ngerti elemen <span class="kdt-ilus"
+    data-ilus="..."> kustom KDTNovels (situs ini gak taruh gambar di
+    <img src> biasa)."""
     covers = {}
     for vol_num, entries in volumes.items():
         illus_url = None
@@ -1216,7 +1359,18 @@ def get_kdtnovels_volume_covers(volumes):
                 break
         if not illus_url:
             continue
-        cover = guess_cover_from_first_chapter(illus_url)
+        cover = None
+        try:
+            res = fetch_url(illus_url)
+            if res.status_code == 200:
+                soup_illus = BeautifulSoup(res.text, 'html.parser')
+                _, illus_elements = scrape_chapter_kdtnovels(illus_url, soup_illus)
+                for e in illus_elements:
+                    if e['type'] == 'img':
+                        cover = e['src']
+                        break
+        except Exception:
+            cover = None
         if cover:
             covers[vol_num] = (cover, illus_url)
             log(f"   📸 Cover Volume {vol_num} diambil dari halaman ilustrasi: {illus_url}")
@@ -1247,7 +1401,7 @@ def scrape_chapter_kdtnovels(url, soup, fallback_label=None):
     elements = []
 
     if container is not None:
-        for elem in container.find_all(['p', 'img', 'h1', 'h2', 'h3', 'h4', 'h5']):
+        for elem in container.find_all(['p', 'img', 'span', 'h1', 'h2', 'h3', 'h4', 'h5']):
             if elem.name in ('h1', 'h2', 'h3', 'h4', 'h5'):
                 heading_text = elem.get_text(strip=True)
                 if not heading_text:
@@ -1263,6 +1417,22 @@ def scrape_chapter_kdtnovels(url, soup, fallback_label=None):
                 src = elem.get('src')
                 if src:
                     elements.append({'type': 'img', 'src': urljoin(url, src), 'referer': url})
+                continue
+
+            if elem.name == 'span':
+                # Elemen kustom KDTNovels buat gambar ilustrasi (mis.
+                # halaman "Ch. 0: Illustrations") -- BUKAN <img> biasa,
+                # URL gambarnya ditaruh di atribut data-ilus (bukan
+                # src), kemungkinan sengaja biar gak gampang di-scrape
+                # via selector <img> standar. Isinya cuma path relatif
+                # ke proxy gambar situs sendiri ("/img/<base64>"), sama
+                # persis kayak pola og:image yang udah kepake di tempat
+                # lain -- jadi tinggal di-urljoin, gak perlu decode
+                # apa-apa manual.
+                cls = elem.get('class') or []
+                data_ilus = elem.get('data-ilus')
+                if 'kdt-ilus' in cls and data_ilus:
+                    elements.append({'type': 'img', 'src': urljoin(url, data_ilus), 'referer': url})
                 continue
 
             # Separator spasi + collapse whitespace: beberapa halaman
@@ -2412,7 +2582,7 @@ def _find_main_content_container(soup):
     gambar novel lain di widget itu ketauan ke-anggep punya chapter ini
     (nyasar ke bab yang salah)."""
     for cls_pattern in (
-        r'reading-content', r'text-left', r'c-blog__body',
+        r'reading-content', r'reader-content', r'text-left', r'c-blog__body',
         r'entry-content', r'chapter-content', r'cha-content', r'post-body',
         r'reading-detail', r'ep-content', r'entry-summary', r'epcontent',
     ):
@@ -2420,7 +2590,12 @@ def _find_main_content_container(soup):
             text_el = el.get_text()
             if 'Please enter your username' in text_el or 'Back to Archives' in text_el:
                 continue
-            if el.find_all('p') or el.find_all('img'):
+            # 'span.kdt-ilus' -- elemen kustom KDTNovels buat gambar
+            # ilustrasi (BUKAN <img> biasa, lihat catatan di
+            # scrape_chapter_kdtnovels). Halaman ilustrasi KDTNovels
+            # gak punya <p>/<img> sama sekali, cuma span-span ini, jadi
+            # kualifikasinya harus ikut ngecek ini juga.
+            if el.find_all('p') or el.find_all('img') or el.find_all('span', class_='kdt-ilus'):
                 # Prefer inner/deeper matching container if any exists,
                 # to avoid picking up outer wrappers like reading-content-wrap
                 for deeper in el.find_all(['div', 'article'], class_=re.compile(cls_pattern, re.IGNORECASE)):
@@ -2428,7 +2603,7 @@ def _find_main_content_container(soup):
                         continue
                     if 'Please enter your username' in deeper.get_text() or 'Back to Archives' in deeper.get_text():
                         continue
-                    if deeper.find_all('p') or deeper.find_all('img'):
+                    if deeper.find_all('p') or deeper.find_all('img') or deeper.find_all('span', class_='kdt-ilus'):
                         el = deeper
                 return el
 
@@ -2444,6 +2619,35 @@ def _find_main_content_container(soup):
         if len(direct_p) < 1 and len(direct_img) < 1:
             continue
         score = sum(len(p.get_text(strip=True)) for p in direct_p) + len(direct_img) * 80
+        if score > 150000:
+            continue
+        if score > best_score:
+            best = tag
+            best_score = score
+    if best is not None:
+        return best
+
+    # Fallback KE-3: situs modern (React/Next.js, dst -- kayak KDTNovels)
+    # sering bungkus TIAP <img> di dalam <div>/<figure> wrapper sendiri
+    # (buat lazy-load/styling), jadi <img>-nya BUKAN anak langsung dari
+    # kontainer utama dan gak kehitung sama fallback di atas yang pakai
+    # recursive=False. Ini paling kerasa di halaman yang isinya CUMA
+    # galeri gambar (mis. "Illustrations"), tanpa paragraf sama sekali.
+    # Di sini kita cari <img> di kedalaman berapa pun (recursive), TAPI
+    # kandidat cuma boleh lolos kalau dia SAMA SEKALI gak punya <p>
+    # anak langsung -- biar gak nyasar milih wrapper gede/layout utama
+    # yang isinya campur macem-macem elemen dari seluruh halaman.
+    best = None
+    best_score = 0
+    for tag in soup.find_all(['div', 'article']):
+        if _is_inside_widget(tag):
+            continue
+        if tag.find_all('p', recursive=False):
+            continue
+        nested_img = tag.find_all('img')
+        if not nested_img:
+            continue
+        score = len(nested_img) * 80
         if score > 150000:
             continue
         if score > best_score:
@@ -2732,6 +2936,27 @@ def scrape_chapter_madara(url, soup):
     return final_title, elements
 
 
+def strip_novel_prefix_from_title(title, story_title):
+    """Beberapa situs (mis. format judul post Blogger) nulis judul chapter
+    lengkap dengan nama novel + volume di depannya, misal:
+    'Gyaru no Jitensha o Naoshitara Natsuka Reta Volume 1 Chapter 1'.
+    Untuk heading di dalam PDF kita cuma mau bagian chapter-nya aja, mis.
+    'Chapter 1'. Fungsi ini strip nama novel (story_title) dan embel-embel
+    'Volume N' di depannya kalau ketemu; kalau polanya gak cocok, judul
+    asli dikembalikan apa adanya (aman, gak maksa)."""
+    if not title or not story_title:
+        return title
+    t = title.strip()
+    st = story_title.strip()
+    if not t.lower().startswith(st.lower()):
+        return t
+    remainder = t[len(st):]
+    remainder = re.sub(r'^[\s\-:–—]+', '', remainder)
+    remainder = re.sub(r'^Volume\s*\d+\s*', '', remainder, flags=re.IGNORECASE)
+    remainder = re.sub(r'^[\s\-:–—]+', '', remainder)
+    return remainder if remainder else t
+
+
 def truncate_for_toc(pdf, text, max_width):
     """Potong `text` (pakai font & ukuran yang lagi aktif di `pdf`) biar
     muat di lebar `max_width` (mm), kasih '...' di ujung kalau kepotong.
@@ -2758,10 +2983,10 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
     t_start_volume = time.time()
 
     pdf = NovelPDF()
-    pdf.add_font("DejaVu", "", FONT_REGULAR)
-    pdf.add_font("DejaVu", "B", FONT_BOLD)
-    pdf.set_margins(left=20, top=20, right=20)
-    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_font(FONT_FAMILY, "", FONT_REGULAR)
+    pdf.add_font(FONT_FAMILY, "B", FONT_BOLD)
+    pdf.set_margins(left=25.4, top=25.4, right=25.4)
+    pdf.set_auto_page_break(auto=True, margin=25.4)
     pdf.set_page_background((0, 0, 0))  # dark theme: semua halaman background hitam
 
     chapters_data = []
@@ -2908,12 +3133,12 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
         pdf.add_page()
         pdf._chapter_title = ""
         if story_title:
-            pdf.set_font("DejaVu", 'B', 22)
+            pdf.set_font(FONT_FAMILY, 'B', 22)
             pdf.ln(80)
             pdf.multi_cell(0, 14, clean_unicode(story_title), align='C')
         if source_domain:
             pdf.ln(15)
-            pdf.set_font("DejaVu", '', 10)
+            pdf.set_font(FONT_FAMILY, '', 10)
             pdf.set_text_color(140, 140, 140)
             pdf.cell(0, 8, f"Source: {source_domain}", align='C')
             pdf.set_text_color(255, 255, 255)
@@ -2925,14 +3150,14 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
         pdf.set_page_background((0, 0, 0))
         pdf.set_text_color(255, 255, 255)
         pdf._chapter_title = story_title or ""
-        pdf.set_font("DejaVu", 'B', 20)
+        pdf.set_font(FONT_FAMILY, 'B', 20)
         pdf.set_text_color(255, 255, 255)
         pdf.ln(60)
         if story_title:
             pdf.multi_cell(0, 12, clean_unicode(story_title), align='C')
         if source_domain:
             pdf.ln(20)
-            pdf.set_font("DejaVu", '', 10)
+            pdf.set_font(FONT_FAMILY, '', 10)
             pdf.set_text_color(140, 140, 140)
             pdf.cell(0, 8, f"Source: {source_domain}", align='C')
             pdf.set_text_color(255, 255, 255)
@@ -2967,7 +3192,7 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
 
     pdf.add_page()
     pdf._chapter_title = ""
-    pdf.set_font("DejaVu", 'B', 18)
+    pdf.set_font(FONT_FAMILY, 'B', 18)
     pdf.cell(0, 15, "DAFTAR ISI", align='L', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_line_width(0.6)
     pdf.line(pdf.get_x(), pdf.get_y(), 190, pdf.get_y())
@@ -2986,22 +3211,21 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
 
     for ch in chapters_data:
         pdf.add_page()
-        pdf._chapter_title = clean_unicode(ch['title'])
+        # Footer cukup nama novelnya aja (story_title udah bersih, gak ada
+        # "Volume N"), BUKAN ch['title'] yang di beberapa situs isinya
+        # "Nama Novel Volume N Chapter M" lengkap.
+        pdf._chapter_title = clean_unicode(story_title) if story_title else clean_unicode(ch['title'])
         ch['page_number'] = pdf.page_no()
         pdf.set_link(ch['link_id'], page=ch['page_number'])
 
-        clean_title = clean_unicode(ch['title'])
-        pdf.start_section(clean_title)
-        pdf.set_font("DejaVu", 'B', 16)
-        # align='L' lebih aman untuk multi_cell width=0
-        pdf.multi_cell(0, 8, clean_title, align='L')
-        pdf.ln(4)
-        pdf.set_line_width(0.5)
-        y_line = pdf.get_y()
-        pdf.line(pdf.get_x(), y_line, 190, y_line)
-        pdf.ln(10)
+        # Judul chapter center + garis pemisah. Strip nama novel/volume di
+        # depan (kalau ada) biar headingnya cuma "Chapter N", gak perlu
+        # nama novelnya lagi (itu sudah ada di footer & halaman sampul).
+        chapter_heading = strip_novel_prefix_from_title(clean_unicode(ch['title']), story_title)
+        pdf.chapter_title(chapter_heading)
 
-        pdf.set_font("DejaVu", size=11)
+        # Isi chapter
+        is_first_paragraph = True
         for elem in ch['elements']:
             if elem['type'] == 'img':
                 img_data = fetch_image(elem['src'], referer=elem.get('referer'))
@@ -3013,8 +3237,27 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
                         pass
             elif elem['type'] == 'text':
                 clean_text = clean_unicode(elem['value'])
-                pdf.multi_cell(0, 6.5, clean_text, align='L')
-                pdf.ln(4)
+                pdf.set_font(FONT_FAMILY, "", 17)
+                pdf.set_text_color(255, 255, 255)
+                pdf.set_x(pdf.l_margin)
+                # Paragraf pertama di chapter: rata kiri (gak nge-indent).
+                # Paragraf berikutnya: baris pertamanya di-indent 0.5" pakai
+                # spasi di depan teks (FPDF gak punya first-line-indent
+                # bawaan; set_x doang bakal nge-indent SEMUA baris paragraf,
+                # bukan cuma baris pertama).
+                if is_first_paragraph:
+                    body_text = clean_text
+                    is_first_paragraph = False
+                else:
+                    body_text = pdf._first_line_indent_prefix() + clean_text
+                # align='L' (bukan 'J'): baris terakhir tiap paragraf gak
+                # ikut di-justify oleh FPDF, jadi paragraf pendek (1 baris)
+                # vs paragraf panjang (>1 baris) kena perlakuan beda -> spasi
+                # indentasi buatan di depan paragraf ikut diregangkan gak
+                # rata pas di-justify. Pakai align kiri biar indentasi
+                # konsisten di semua paragraf.
+                pdf.multi_cell(0, 6.9, body_text, align='L')
+                pdf.ln(2)
 
     # Isi entri DAFTAR ISI ke halaman-halaman yang udah direservasi di
     # atas. PENTING: gak boleh panggil pdf.add_page() di loop ini --
@@ -3033,14 +3276,14 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
         else:
             pdf.set_y(TOC_OTHER_PAGE_START_Y)
             capacity = toc_capacity_other
-        pdf.set_font("DejaVu", size=11)
+        pdf.set_font(FONT_FAMILY, size=11)
 
         for _ in range(capacity):
             if entry_idx >= num_chapters:
                 break
             ch = chapters_data[entry_idx]
             entry_idx += 1
-            clean_ch_title = clean_unicode(ch['title'])
+            clean_ch_title = strip_novel_prefix_from_title(clean_unicode(ch['title']), story_title)
             pdf.set_text_color(100, 180, 255)
             toc_text = f"{entry_idx}. {clean_ch_title}"
             toc_text = truncate_for_toc(pdf, toc_text, 138)
@@ -3048,7 +3291,7 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
             pdf.set_text_color(180, 180, 180)
             pdf.cell(0, 8, f"Hal. {ch['page_number']}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT, link=ch['link_id'])
             pdf.ln(1.5)
-            pdf.set_font("DejaVu", size=11)
+            pdf.set_font(FONT_FAMILY, size=11)
 
         if entry_idx >= num_chapters:
             break
@@ -3254,7 +3497,7 @@ if __name__ == "__main__":
         urls = load_urls(URLS_FILE, required=True)
         story_title = title_from_slug(urls[0])
         safe_title = sanitize_filename(story_title)
-        output_name = os.path.join(OUTPUT_DIR, f"{safe_title}.pdf")
+        output_name = os.path.join(OUTPUT_DIR, f"{safe_title}_{SITE_NAME}.pdf")
         log(f"\n=== Memproses {len(urls)} bab (mode manual urls.txt) ===")
         build_pdf_for_urls(urls, output_name, source_domain=urlparse(urls[0]).netloc, story_title=story_title)
         STATS["novel_ok"] += 1
