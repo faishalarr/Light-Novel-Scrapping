@@ -29,7 +29,7 @@ SERIES_URLS_FILE = "VeiSeriesUrls.txt"
 SKIP_EXISTING_PDF = True
 
 # Nama situs yang ditampilkan di footer tiap halaman (band kanan bawah).
-SITE_NAME = "VeiNovel"
+SITE_NAME = "LalaNovel"
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
@@ -110,7 +110,7 @@ class NovelPDF(FPDF):
         if self._next_page_is_image or self.page_no() in self._image_only_pages:
             return
         self.set_y(5.1)
-        self.set_font(FONT_FAMILY, "", 12)
+        self.set_font(FONT_FAMILY, "", 16)
         self.set_text_color(255, 255, 255)
         self.cell(0, 6, f"Page | {self.page_no()}", align='R')
         self.set_draw_color(217, 217, 217)
@@ -135,7 +135,7 @@ class NovelPDF(FPDF):
                 hi = mid - 1
         return (text[:lo].rstrip() + ellipsis) if lo > 0 else ellipsis
 
-    def _fit_title_lines(self, text, max_width, max_font=11, min_font=7, font_style=""):
+    def _fit_title_lines(self, text, max_width, max_font=14, min_font=8, font_style="B"):
         """Cari ukuran font terbesar yang bikin `text` muat dalam SATU
         baris selebar `max_width`. Kalau di font terkecil pun tetap
         kepanjangan, dipecah jadi 2 baris (greedy per kata).
@@ -147,18 +147,16 @@ class NovelPDF(FPDF):
         langsung dari SATU pengukuran + rasio, tanpa perlu banyak
         pemanggilan set_font().
 
-        CATATAN PENTING #2: `font_style` default REGULAR ("", bukan
-        "B"). Sudah diuji: manggil set_font(..., "B", ...) dari DALAM
-        footer() -- di ukuran berapa pun, walau ukurannya udah dipakai
-        di tempat lain -- bikin fpdf2 salah nge-render teks di halaman
-        DAFTAR ISI yang diisi belakangan lewat teknik "mundur"
-        (pdf.page = N ke halaman yang udah ada) jadi karakter acak
-        (isinya sendiri tetap benar, cuma glyph yang salah). Font Bold
-        di footer() adalah pemicunya, terlepas dari size/jumlah
-        pemanggilan -- jadi footer WAJIB pakai style regular, bukan
-        soal optimasi jumlah set_font() semata. Style Bold masih aman
-        dipakai di tempat lain (mis. chapter_title(), heading TOC)
-        karena itu dirender maju/normal, bukan dari dalam footer()."""
+        CATATAN PENTING #2: `font_style` default sekarang "B" (Bold),
+        biar sama kayak ScraperLN.py. Versi SEBELUMNYA sengaja pakai
+        regular ("") di sini karena manggil set_font(..., "B", ...) dari
+        DALAM footer() -- di ukuran berapa pun -- kebukti bikin fpdf2
+        salah nge-render teks di halaman DAFTAR ISI yang diisi belakangan
+        lewat teknik "mundur" (pdf.page = N ke halaman yang udah ada)
+        jadi karakter acak (isinya sendiri tetap benar, cuma glyph yang
+        salah). Kalau itu muncul lagi di PDF hasil script ini, ganti balik
+        font_style di sini (dan 2 pemanggilan set_font Bold di footer())
+        ke regular "" -- itu obatnya."""
         if not text:
             self.set_font(FONT_FAMILY, font_style, max_font)
             return max_font, [""]
@@ -212,35 +210,37 @@ class NovelPDF(FPDF):
         half_w = usable_w / 2
         title_max_w = half_w - 2
         title_text = clean_unicode(self._chapter_title)
-        # Style REGULAR ("") -- LIHAT catatan penting #2 di
-        # _fit_title_lines soal kenapa footer gak boleh pakai Bold.
+        # NOTE: style Bold di sini (dipakai biar sama kayak ScraperLN.py).
+        # PERINGATAN dari versi sebelumnya: manggil set_font(..., "B", ...)
+        # dari DALAM footer() pernah kebukti bikin fpdf2 salah nge-render
+        # teks di halaman DAFTAR ISI yang diisi belakangan lewat teknik
+        # "mundur" (pdf.page = N ke halaman yang udah ada) -- jadi karakter
+        # acak (isinya tetap benar, cuma glyph salah). Kalau nanti muncul
+        # lagi masalah itu di PDF hasil script ini, itu penyebabnya --
+        # baliknya ganti "B" jadi "" di 3 baris set_font bawah.
         font_size, title_lines = self._fit_title_lines(title_text, title_max_w)
-        line_h = 4.5 if len(title_lines) == 1 else 3.6
-        band_top = self.h - self.b_margin + 0.5
-        band_h = max(5.0, line_h * len(title_lines) + 1.5)
+        line_h = 5.0 if len(title_lines) == 1 else 4.0
+        band_top = 280.5
+        band_h = max(5.5, line_h * len(title_lines) + 1.5)
         self.set_fill_color(211, 211, 211)
         self.rect(self.l_margin, band_top, usable_w, band_h, 'F')
         self.set_text_color(0, 0, 0)
-        self.set_font(FONT_FAMILY, "", font_size)
+        self.set_font(FONT_FAMILY, "B", font_size)
         text_y = band_top + (band_h - line_h * len(title_lines)) / 2
         for i, line in enumerate(title_lines):
             self.set_xy(self.l_margin, text_y + i * line_h)
             self.cell(half_w, line_h, line, align='L')
-        self.set_font(FONT_FAMILY, "", 11)
+        self.set_font(FONT_FAMILY, "B", 14)
         self.set_xy(self.l_margin + half_w, band_top)
         self.cell(half_w, band_h, SITE_NAME, align='R')
         self.set_text_color(255, 255, 255)
 
     def chapter_title(self, title):
-        self.set_font(FONT_FAMILY, "B", 18)
+        self.set_font(FONT_FAMILY, "B", 26)
         self.set_text_color(255, 255, 255)
         self.set_x(self.l_margin)
-        self.multi_cell(0, 9, clean_unicode(title), align='C')
-        self.ln(4)
-        self.set_line_width(0.5)
-        y_line = self.get_y()
-        self.line(self.l_margin, y_line, self.w - self.r_margin, y_line)
-        self.ln(8)
+        self.multi_cell(0, 10, clean_unicode(title), align='C')
+        self.ln(6)
 
     def _first_line_indent_prefix(self, indent_mm=12.7):
         """Fpdf gak punya first-line-indent bawaan; set_x nge-indent
@@ -438,8 +438,8 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
     pdf = NovelPDF()
     pdf.add_font(FONT_FAMILY, "", FONT_REGULAR)
     pdf.add_font(FONT_FAMILY, "B", FONT_BOLD)
-    pdf.set_margins(left=20, top=20, right=20)
-    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_margins(left=25.4, top=25.4, right=25.4)
+    pdf.set_auto_page_break(auto=True, margin=25.4)
     pdf.set_page_background((0, 0, 0))  # dark theme: semua halaman background hitam
 
     chapters_data = []
@@ -561,10 +561,12 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
 
         clean_title = clean_unicode(ch['title'])
         pdf.start_section(clean_title)
-        pdf._chapter_title = clean_title
+        # Footer cukup nama series-nya aja (BUKAN ch['title'] chapter),
+        # sama kayak ScraperLN.py.
+        pdf._chapter_title = clean_unicode(series.get('title', '')) or clean_title
         pdf.chapter_title(clean_title)
 
-        pdf.set_font(FONT_FAMILY, size=11)
+        pdf.set_font(FONT_FAMILY, size=17)
         pdf.set_text_color(255, 255, 255)
         is_first_paragraph = True
         for elem in ch['elements']:
@@ -587,7 +589,7 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
                         log(f"    ⚠️ Gagal render gambar: {e}", "WARN")
             elif elem['type'] == 'text':
                 clean_text = clean_unicode(elem['value'])
-                pdf.set_font(FONT_FAMILY, size=11)
+                pdf.set_font(FONT_FAMILY, size=17)
                 pdf.set_text_color(255, 255, 255)
                 pdf.set_x(pdf.l_margin)
                 # Paragraf pertama di chapter: rata kiri tanpa indent.
@@ -603,8 +605,8 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
                 # align='L' (bukan 'J'): biar spasi indentasi buatan di
                 # depan paragraf gak ikut diregangkan oleh mesin justify
                 # FPDF pada baris yang bukan baris terakhir paragraf.
-                pdf.multi_cell(0, 6.5, body_text, align='L')
-                pdf.ln(4)
+                pdf.multi_cell(0, 6.9, body_text, align='L')
+                pdf.ln(2)
 
     # --- ISI DAFTAR ISI ---
     last_page_number = pdf.page_no()  # halaman terakhir (bab terakhir), direstore di bawah
@@ -717,6 +719,23 @@ def login_veinovel():
             return False
         csrf_token = m.group(1)
 
+        # Ambil Inertia asset "version" dari atribut data-page="{...json...}"
+        # yang ditanam Laravel di halaman. WAJIB dikirim balik sebagai header
+        # X-Inertia-Version di POST /login -- kalau nggak ada/nggak cocok,
+        # middleware Inertia langsung balas 409 Conflict TANPA sempat cek
+        # email/password sama sekali (itu penyebab paling umum status 409
+        # di endpoint ini, beda dari 422 yang emang salah kredensial).
+        inertia_version = None
+        m_page = re.search(r'data-page="([^"]+)"', login_page.text)
+        if m_page:
+            try:
+                page_data = json.loads(html.unescape(m_page.group(1)))
+                inertia_version = page_data.get("version")
+            except Exception:
+                pass
+        if not inertia_version:
+            log("   ⚠️ Gak nemu Inertia version di halaman login (lanjut tanpa itu, mungkin 409).", "WARN")
+
         # Step 2: POST /login (login.attempt route)
         login_data = {
             "_token": csrf_token,
@@ -727,6 +746,8 @@ def login_veinovel():
         headers_post["X-Requested-With"] = "XMLHttpRequest"
         headers_post["X-CSRF-TOKEN"] = csrf_token
         headers_post["X-Inertia"] = "true"
+        if inertia_version:
+            headers_post["X-Inertia-Version"] = inertia_version
         headers_post["Accept"] = "text/html, application/xhtml+xml"
         headers_post["Origin"] = "https://veinovel.com"
         headers_post["Referer"] = "https://veinovel.com/auth"
@@ -751,6 +772,11 @@ def login_veinovel():
         log(f"   ⚠️ Login gagal (status {res.status_code}).", "WARN")
         if res.status_code == 422:
             log("   ⚠️ Kemungkinan email/password salah.", "WARN")
+        elif res.status_code == 409:
+            log("   ⚠️ 409 = Inertia asset-version mismatch (X-Inertia-Version salah/kosong), "
+                "BUKAN berarti email/password salah. Kalau masih 409 walau version udah "
+                "dikirim, kemungkinan situs update versi asset tepat pas request jalan -- "
+                "coba ulang.", "WARN")
     except Exception as e:
         log(f"   ⚠️ Error login: {e}", "WARN")
 
