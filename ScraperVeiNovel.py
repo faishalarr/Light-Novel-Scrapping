@@ -732,9 +732,11 @@ def login_veinovel():
         headers_post["Referer"] = "https://veinovel.com/auth"
 
         # Laravel Inertia juga butuh X-XSRF-TOKEN dari cookie
+        # Cookie-nya URL-encoded (base64 -> urlencode), harus di-decode dulu
         xsrf = SESSION.cookies.get("XSRF-TOKEN", "")
         if xsrf:
-            headers_post["X-XSRF-TOKEN"] = xsrf
+            from urllib.parse import unquote
+            headers_post["X-XSRF-TOKEN"] = unquote(xsrf)
 
         res = SESSION.post("https://veinovel.com/login", data=login_data, headers=headers_post, timeout=30)
 
