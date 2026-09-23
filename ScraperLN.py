@@ -252,14 +252,22 @@ def log(msg, level="INFO"):
 class NovelPDF(FPDF):
     _chapter_title = ""
     _cover_done = False
+    _image_only_pages = set()
+    _next_page_is_image = False
 
     def add_page(self, *args, **kwargs):
         super().add_page(*args, **kwargs)
-        self.set_page_background((0, 0, 0))
+        if self._next_page_is_image:
+            self._image_only_pages.add(self.page_no())
+            self._next_page_is_image = False
+        else:
+            self.set_page_background((0, 0, 0))
         self.set_text_color(255, 255, 255)
 
     def header(self):
         if self.page_no() <= 1:
+            return
+        if self._next_page_is_image or self.page_no() in self._image_only_pages:
             return
         self.set_y(5.1)
         self.set_font(FONT_FAMILY, "", 16)
@@ -292,6 +300,8 @@ class NovelPDF(FPDF):
 
     def footer(self):
         if self.page_no() <= 1:
+            return
+        if self._next_page_is_image or self.page_no() in self._image_only_pages:
             return
         # Referensi asli pakai font dekoratif "Britannic Bold" khusus buat
         # bar ini (beda dari body font). Kalau kamu taruh file ttf-nya di
@@ -3233,19 +3243,23 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
                 img_data = fetch_image(elem['src'], referer=elem.get('referer'))
                 if img_data:
                     try:
-                        pdf.add_page()
-                        try:
-                            from PIL import Image as _PIL2
-                            _img_check = _PIL2.open(io.BytesIO(img_data.getvalue() if hasattr(img_data, 'getvalue') else img_data))
-                            is_landscape = _img_check.width > _img_check.height
-                        except Exception:
-                            is_landscape = False
-                        if is_landscape:
-                            pdf.image(img_data, x=0, y=0, w=210)
-                        else:
-                            pdf.image(img_data, x=0, y=0, w=210, h=297)
-                    except Exception:
-                        pass
+                        from PIL import Image as _PIL2
+                        img_data.seek(0)
+                        _img_check = _PIL2.open(img_data)
+                        _img_w, _img_h = _img_check.size
+                        img_data.seek(0)
+
+                        # Buat ukuran halaman mengikuti rasio gambar, bukan selalu A4.
+                        # Dengan begitu tidak ada area hitam di atas/bawah atau kiri/kanan
+                        # hanya karena gambar punya rasio berbeda dari A4.
+                        PAGE_W = 210.0  # mm
+                        PAGE_H = PAGE_W * _img_h / _img_w
+
+                        pdf._next_page_is_image = True
+                        pdf.add_page(format=(PAGE_W, PAGE_H))
+                        pdf.image(img_data, x=0, y=0, w=PAGE_W, h=PAGE_H)
+                    except Exception as e:
+                        log(f"   ⚠️ Gagal render gambar ke halaman penuh: {e}", "WARN")
             elif elem['type'] == 'text':
                 clean_text = clean_unicode(elem['value'])
                 pdf.set_font(FONT_FAMILY, "", 17)
