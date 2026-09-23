@@ -3234,7 +3234,7 @@ def build_pdf_for_urls(urls, output_path, cover_image_url=None, url_labels=None,
                 if img_data:
                     try:
                         pdf.add_page()
-                        pdf.image(img_data, x=25, w=160)
+                        pdf.image(img_data, x=0, y=0, w=210, h=297)
                     except Exception:
                         pass
             elif elem['type'] == 'text':
