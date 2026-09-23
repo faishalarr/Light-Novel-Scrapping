@@ -74,12 +74,30 @@ def log(msg, level="INFO"):
 
 
 class NovelPDF(FPDF):
+    _image_only_pages = set()
+    _next_page_is_image = False
+
+    def add_page(self, *args, **kwargs):
+        super().add_page(*args, **kwargs)
+        if self._next_page_is_image:
+            self._image_only_pages.add(self.page_no())
+            self._next_page_is_image = False
+
+    def header(self):
+        if self.page_no() <= 1:
+            return
+        if self._next_page_is_image or self.page_no() in self._image_only_pages:
+            return
+
     def footer(self):
-        if self.page_no() > 1:
-            self.set_y(-15)
-            self.set_font("DejaVu", '', 9)
-            self.set_text_color(128, 128, 128)
-            self.cell(0, 10, f"{self.page_no()}", align='R')
+        if self.page_no() <= 1:
+            return
+        if self._next_page_is_image or self.page_no() in self._image_only_pages:
+            return
+        self.set_y(-15)
+        self.set_font("DejaVu", '', 9)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 10, f"{self.page_no()}", align='R')
 
 
 def clean_unicode(text):
@@ -243,8 +261,19 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
     if cover_url:
         img_data = fetch_image(cover_url)
         if img_data:
-            pdf.add_page()
-            pdf.image(img_data, x=0, y=0, w=210, h=297)
+            try:
+                from PIL import Image as _PIL2
+                img_data.seek(0)
+                _img_check = _PIL2.open(img_data)
+                _img_w, _img_h = _img_check.size
+                img_data.seek(0)
+                PAGE_W = 210.0
+                PAGE_H = PAGE_W * _img_h / _img_w
+                pdf._next_page_is_image = True
+                pdf.add_page(format=(PAGE_W, PAGE_H))
+                pdf.image(img_data, x=0, y=0, w=PAGE_W, h=PAGE_H)
+            except Exception as e:
+                log(f"    ⚠️ Gagal render cover: {e}", "WARN")
 
     # --- HALAMAN JUDUL (judul novel + source) ---
     story_title = series.get('title', 'Novel')
@@ -312,10 +341,18 @@ def build_pdf_for_volume(series, chapters_meta, output_path):
                 img_data = fetch_image(elem['src'])
                 if img_data:
                     try:
-                        pdf.image(img_data, x=25, w=160)
-                        pdf.ln(6)
-                    except Exception:
-                        pass
+                        from PIL import Image as _PIL2
+                        img_data.seek(0)
+                        _img_check = _PIL2.open(img_data)
+                        _img_w, _img_h = _img_check.size
+                        img_data.seek(0)
+                        PAGE_W = 210.0
+                        PAGE_H = PAGE_W * _img_h / _img_w
+                        pdf._next_page_is_image = True
+                        pdf.add_page(format=(PAGE_W, PAGE_H))
+                        pdf.image(img_data, x=0, y=0, w=PAGE_W, h=PAGE_H)
+                    except Exception as e:
+                        log(f"    ⚠️ Gagal render gambar: {e}", "WARN")
             elif elem['type'] == 'text':
                 clean_text = clean_unicode(elem['value'])
                 pdf.multi_cell(0, 6.5, clean_text, align='L')
